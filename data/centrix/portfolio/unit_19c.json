@@ -1,0 +1,63 @@
+{
+  "unit_id": "unit_19c",
+  "property": {
+    "address": "Peterstraße 28, 52068 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 4,
+    "size_sqm": 48,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740502",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_o6",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_406",
+    "name": "Georg Lange",
+    "move_in": "2024-07-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 658,
+      "start": "2024-07-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_19c",
+      "customer_contact_id": "c_406",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2520,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-12",
+      "current_monthly_price_eur": 90.1
+    }
+  ]
+}

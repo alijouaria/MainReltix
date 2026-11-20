@@ -1,0 +1,66 @@
+{
+  "unit_id": "unit_24b",
+  "property": {
+    "address": "Mariahilfstraße 43, 52073 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 4,
+    "size_sqm": 66,
+    "rooms": 4,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740587",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_o11",
+    "name": "Immobilien Aachen GmbH"
+  },
+  "tenant": {
+    "contact_id": "c_411",
+    "name": "Lea Zimmermann",
+    "email": "lea@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2025-03-01",
+    "contract_sharing_opt_in": true,
+    "contact_preference": "no_calls"
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 773,
+      "start": "2025-03-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_24b",
+      "customer_contact_id": "c_411",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 3120,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2027-01-08",
+      "current_monthly_price_eur": 96.85
+    }
+  ]
+}

@@ -44,6 +44,7 @@ TRANSITIONS = {
 HOST = "127.0.0.1"
 PORT = 8765
 RESET_DATE = None
+DEFAULT_DEMO_DATE = date(2026, 11, 20)
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:0.5b"
 
@@ -166,6 +167,12 @@ def agent_variables(unit: dict) -> dict:
     expiry = date.fromisoformat(energy["expiry_date"]) if energy.get("expiry_date") else None
     partner = read_json(OFFERS_FILE)
     price = float(energy.get("current_monthly_price_eur") or 0)
+    greeting = None
+    if (unit.get("tenant") or {}).get("language") == "de" and expiry:
+        months = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        greeting = (f"Hallo {name.split(' ')[0]}, hier ist Mia, die digitale Assistentin von reltix, Ihrer Hausverwaltung. "
+                    f"Ich rufe an, weil Ihr Stromvertrag mit {energy.get('supplier', 'Ihrem Anbieter')} am {expiry.day}. {months[expiry.month - 1]} endet. "
+                    f"Haben Sie zwei Minuten?")
     return {
         "tenant_first_name": name.split(" ")[0], "tenant_last_name": " ".join(name.split(" ")[1:]),
         "full_address": unit.get("property", {}).get("address", ""), "current_supplier": energy.get("supplier", "your supplier"),
@@ -175,7 +182,8 @@ def agent_variables(unit: dict) -> dict:
         "meter_last4": str((unit.get("unit", {}).get("meters") or [{}])[0].get("number") or "")[-4:],
         "offers_summary": offers_summary(partner, price),
         "call_reason": "renewal",
-        "first_message": (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
+        "language": (unit.get("tenant") or {}).get("language", "en"),
+        "first_message": greeting or (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
                           f"I'm calling because your electricity contract with {energy.get('supplier', 'your supplier')} ends on "
                           f"{expiry.day} {expiry.strftime('%B')}. Do you have two minutes?") if expiry else
                          f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix. Do you have two minutes?",
@@ -250,6 +258,27 @@ def schedule_callback(unit_id: str, when_text: str):
     return due
 
 
+def next_event_date(after: date):
+    """The next demo date on which a renewal window opens (so staff can jump straight to it)."""
+    dates = []
+    for unit_id in all_unit_ids():
+        unit = read_json(unit_path(unit_id))
+        if not unit.get("tenant"):
+            continue
+        for c in unit.get("contracts", []):
+            if c.get("type") == "energy_supply" and c.get("status") == "active" and c.get("expiry_date"):
+                opens = date.fromisoformat(c["expiry_date"]) - timedelta(days=int(c.get("renewal_notice_days", 30)))
+                if opens > after:
+                    dates.append(opens)
+    return min(dates) if dates else None
+
+
+def flag(unit_id: str, text: str) -> None:
+    """Tell the property manager once (not on every daily run) that a flat needs a person."""
+    if not any(e.get("unit_id") == unit_id and e.get("text") == text for e in read_events()):
+        add_event("attention", text, "centrix", unit_id)
+
+
 def run_trigger(source: str = "scheduled") -> dict:
     """Daily centrix check (connector spec §11): open a case when an active energy contract enters its
     renewal window (today >= expiry - renewal_notice_days). Every unit gets a decision and a reason."""
@@ -270,11 +299,23 @@ def run_trigger(source: str = "scheduled") -> dict:
         def decide(decision: str, reason: str) -> None:
             results.append({**row, "decision": decision, "reason": reason})
 
+        def needs_person(log_text: str, reason: str) -> None:
+            handled = unit.get("handled")
+            if handled and handled.get("reason") == reason:
+                decide("skipped", f"Handled by the property team on {handled['at'][:10]}" + (f": {handled['note']}" if handled.get("note") else "."))
+                return
+            flag(unit_id, log_text)
+            decide("attention", reason)
+
         if not tenant:
             decide("skipped", "Vacant. No resident to contact.")
             continue
         contracts = [c for c in unit.get("contracts", []) if c.get("type") == "energy_supply"]
-        energy = next((c for c in contracts if c.get("status") == "active"), None)
+        active = [c for c in contracts if c.get("status") == "active"]
+        energy = active[0] if active else None
+        if unit.get("unit", {}).get("usage") == "commercial":
+            decide("skipped", "Commercial unit. Household tariffs don't apply; business customers are out of scope.")
+            continue
         if energy is None:
             if any(c.get("order_id") or c.get("status") in ("signed", "ending") for c in contracts):
                 decide("attention", "No active supplier contract with a reliable end date. Staff must check the supply record.")
@@ -282,7 +323,8 @@ def run_trigger(source: str = "scheduled") -> dict:
                 decide("skipped", "No energy contract on record. Offer at next move-in or move-out.")
             continue
         if not energy.get("expiry_date"):
-            decide("attention", "Contract end date is missing. Staff must verify the term before offering renewal.")
+            needs_person("No end date on file for the electricity contract, so centrix can't time a renewal. Ask the resident for the contract.",
+                         "Contract end date is missing. Staff must verify the term before offering renewal.")
             continue
         expiry = date.fromisoformat(energy["expiry_date"])
         notice = int(energy.get("renewal_notice_days", 30))
@@ -292,6 +334,10 @@ def run_trigger(source: str = "scheduled") -> dict:
             continue
         if today < expiry - timedelta(days=notice):
             decide("skipped", f"Too early. Window opens {(expiry - timedelta(days=notice)).isoformat()} ({notice} days before expiry).")
+            continue
+        if len(active) > 1:
+            needs_person(f"Data conflict: {len(active)} active electricity contracts on file ({', '.join(c.get('supplier', '?') for c in active)}). Fix the record before anyone is called.",
+                         f"{len(active)} active electricity contracts on file. Data conflict; no call until fixed.")
             continue
         cycle = renewal_cycle(energy)
         open_in_cycle = any(o.get("subject", {}).get("unit_id") == unit_id
@@ -303,19 +349,56 @@ def run_trigger(source: str = "scheduled") -> dict:
             continue
         postcode = re.search(r"\b(\d{5})\b", address)
         if postcode and not any(postcode.group(1).startswith(p) for p in prefixes):
-            decide("attention", f"In the window, but no partner serves postcode {postcode.group(1)}. Property manager notified; no call.")
-            add_event("detected", f"Contract ends {energy['expiry_date']}; no partner covers {postcode.group(1)}. Needs a person.", "centrix", unit_id)
+            needs_person(f"Contract ends {energy['expiry_date']}; no partner covers postcode {postcode.group(1)}. Needs a person.",
+                         f"In the window, but no partner serves postcode {postcode.group(1)}. Property manager notified; no call.")
             continue
-        meter = next((m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"), {})
+        meters = unit.get("unit", {}).get("meters", [])
+        meter = next((m for m in meters if m.get("type") == "electricity"), {})
+        if tenant.get("move_out") and date.fromisoformat(tenant["move_out"]) <= expiry:
+            needs_person(f"{tenant.get('name')} moves out on {tenant['move_out']}, before the contract ends on {energy['expiry_date']}. Offer the new tariff to the next tenant instead.",
+                         f"Resident moves out {tenant['move_out']}, before the contract ends. No renewal call; plan for the next tenant.")
+            continue
+        if not tenant.get("phone") and not tenant.get("email"):
+            needs_person(f"In the renewal window, but there's no phone or email for {tenant.get('name')}. Send a letter or get contact details.",
+                         "No phone or email on file. Mia can't reach the resident; letter needed.")
+            continue
+        if not meter and any(m.get("type") == "electricity_shared" for m in meters):
+            needs_person("No individual electricity meter: the flat is supplied through the building's shared meter. Renewal is the landlord's decision.",
+                         "Shared building meter, no own meter. Landlord decides; no call.")
+            continue
+        price_now = float(energy.get("current_monthly_price_eur") or 0)
+        cheapest = min((float(o.get("estimated_monthly_price_eur") or 0) for o in partner.get("offers", [])), default=0)
+        if cheapest and price_now and price_now <= cheapest:
+            decide("skipped", f"Already pays €{price_now:.2f}/month, less than the best partner offer (€{cheapest:.2f}). No call; nothing to gain.")
+            continue
+        usage = float(energy.get("annual_consumption_kwh") or 0)
+        size = float(unit.get("unit", {}).get("size_sqm") or 0)
+        if size and usage / size > 100:
+            needs_person(f"Unusual usage: {usage:,.0f} kWh a year for {size:.0f} m² ({usage / size:.0f} kWh/m², about 4× normal). Check the meter or electric heating before offering a household tariff.",
+                         f"Usage {usage:,.0f} kWh/year for {size:.0f} m² is unusually high. Check before offering a tariff; no call.")
+            continue
         notes = []
+        if tenant.get("language") == "de":
+            notes.append("resident speaks German: Mia calls in German")
         if today > expiry:
             notes.append(f"expired {(today - expiry).days} days ago, likely on a default tariff: urgent")
         if not meter.get("number"):
             notes.append("meter number missing: Mia asks for a meter photo")
         reason = f"Offer available in the tenant portal. Contract ends {energy['expiry_date']}." + (" " + "; ".join(notes) if notes else "")
+        no_calls = tenant.get("contact_preference") == "no_calls"
+        reason += " Resident asked not to be called: link sent by SMS." if no_calls else " Mia calls the resident."
         decide("matched", reason)
         if (unit_id, energy["expiry_date"]) not in published:
             add_event("detected", f"Contract ends {energy['expiry_date']}. Renewal offer posted in the tenant portal.", "centrix", unit_id)
+        calls = read_list(CALLS_FILE, "calls")
+        if not any(c["unit_id"] == unit_id and c.get("case") == energy["expiry_date"] for c in calls):
+            calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": tenant.get("name"), "kind": "renewal",
+                          "case": energy["expiry_date"], "status": "sms_sent" if no_calls else "queued",
+                          "channel": "sms" if no_calls else "browser", "urgent": today > expiry, "created_at": now_iso(),
+                          "history": [{"status": "sms_sent" if no_calls else "queued", "at": now_iso()}]})
+            write_json(CALLS_FILE, {"calls": calls})
+            add_event("link" if no_calls else "call_queued", "Resident prefers no calls: portal link sent by SMS." if no_calls
+                      else f"Outbound call to {tenant.get('name')} queued for Mia.", "sms" if no_calls else "centrix", unit_id)
     run = {"date": today.isoformat(), "ran_at": now_iso(), "source": source, "scanned": len(results),
            "matched": sum(r["decision"] == "matched" for r in results),
            "attention": sum(r["decision"] == "attention" for r in results), "results": results}
@@ -555,7 +638,29 @@ class DemoHandler(BaseHTTPRequestHandler):
                     "issues_urgent": sum(bool(i.get("urgent")) and not i.get("reply") for i in issues),
                     "support_calls": len(issues) + sum(s.get("channel") == "phone" for o in orders for s in o["status_history"])
                                      + sum(bool(i.get("reply") and i.get("shared_order_id")) for i in issues)}
+            names = {}
+            inbox = []
+            for uid in all_unit_ids():
+                u = read_json(unit_path(uid))
+                names[uid] = (u.get("tenant") or {}).get("name") or "Vacant"
+                for i in u.get("issues", []):
+                    if not i.get("reply") and not i.get("handled"):
+                        inbox.append({"kind": "issue", "unit_id": uid, "tenant": names[uid], "urgent": bool(i.get("urgent")),
+                                      "issue_id": i.get("issue_id"), "text": i.get("text"), "at": i.get("reported_at")})
+                need = (u.get("renewal_case") or {}).get("needs_person")
+                if need and not (u.get("renewal_case") or {}).get("needs_person_handled"):
+                    inbox.append({"kind": "needs_person", "unit_id": uid, "tenant": names[uid], "urgent": False, "text": need,
+                                  "at": (u.get("renewal_case") or {}).get("updated_at")})
+            for r in (run or {}).get("results", []):
+                if r["decision"] == "attention":
+                    inbox.append({"kind": "flag", "unit_id": r["unit_id"], "tenant": r.get("tenant") or "Vacant", "urgent": False,
+                                  "text": r["reason"], "at": (run or {}).get("ran_at")})
+            inbox.sort(key=lambda x: (not x["urgent"], x["kind"] != "issue"))
+            feed = [{**e, "tenant": names.get(e.get("unit_id"), "")} for e in read_events()
+                    if e.get("channel") != "centrix"][-20:]
+            nxt = next_event_date(demo_today())
             self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "kpis": kpis,
+                                 "inbox": inbox, "feed": feed, "next_event": nxt.isoformat() if nxt else None,
                                  "supplier_followups": [c for c in read_list(CALLS_FILE, "calls")
                                                         if c.get("kind") == "supplier_follow_up" and c.get("status") != "done"],
                                  "phone_ready": phone_ready(), "auto_dial_on": bool(os.environ.get("DEMO_PHONE_NUMBER")) and phone_ready()})
@@ -620,9 +725,21 @@ class DemoHandler(BaseHTTPRequestHandler):
             elif path == "/api/case":
                 self.update_case(body)
             elif path == "/api/clock":
-                today = date.fromisoformat(str(body.get("today")))
+                step = str(body.get("advance", ""))
+                if step == "next":
+                    today = next_event_date(demo_today())
+                    if today is None:
+                        raise ValueError("Nothing else is scheduled.")
+                elif step in ("day", "week"):
+                    today = demo_today() + timedelta(days=1 if step == "day" else 7)
+                else:
+                    today = date.fromisoformat(str(body.get("today")))
                 write_json(CLOCK_FILE, {"today": today.isoformat()})
                 self.send_json(200, {"ok": True, "run": run_trigger("date changed")})
+            elif path == "/api/handled":
+                self.mark_handled(body)
+            elif path == "/api/calls":
+                self.call_now(body)
             elif path == "/api/run":
                 self.send_json(200, {"ok": True, "run": run_trigger("manual")})
             elif re.fullmatch(r"/api/calls/call_[a-z0-9]+/phone", path):
@@ -860,6 +977,52 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(path, unit)
         add_event("issue_reply", issue["reply"], channel, unit["unit_id"])
         self.send_json(200, {"issue": issue})
+
+    def mark_handled(self, body: dict) -> None:
+        """Staff clears an item from "Needs you": a flag from the daily run, a complaint, or a request for a person."""
+        unit_id = str(body.get("unit_id", ""))
+        path = unit_path(unit_id)
+        unit = read_json(path)
+        note = str(body.get("note", "")).strip()[:160]
+        kind = str(body.get("kind", "flag"))
+        if kind == "issue":
+            issue = next((i for i in unit.get("issues", []) if i.get("issue_id") == body.get("issue_id")), None)
+            if issue is None:
+                raise ValueError("Unknown complaint.")
+            issue["handled"] = {"at": now_iso(), "note": note}
+            text = f"Complaint handled by the property team{': ' + note if note else ''}."
+        elif kind == "needs_person":
+            unit.setdefault("renewal_case", {})["needs_person_handled"] = now_iso()
+            text = f"Request for a person handled{': ' + note if note else ''}."
+        else:
+            run = read_json(RUN_FILE) if RUN_FILE.exists() else {}
+            row = next((r for r in run.get("results", []) if r["unit_id"] == unit_id and r["decision"] == "attention"), None)
+            if row is None:
+                raise ValueError("Nothing to handle for this flat.")
+            unit["handled"] = {"at": now_iso(), "reason": row["reason"], "note": note}
+            text = f"Flag handled by the property team{': ' + note if note else ''}."
+        write_json(path, unit)
+        add_event("handled", text, "staff", unit_id)
+        if kind == "flag":
+            run_trigger("flag handled")
+        self.send_json(200, {"ok": True})
+
+    def call_now(self, body: dict) -> None:
+        """Staff asks Mia to call a resident right away (rings on the resident's page)."""
+        unit_id = str(body.get("unit_id", ""))
+        unit = read_json(unit_path(unit_id))
+        tenant = unit.get("tenant") or {}
+        if not tenant:
+            raise ValueError("No resident lives in this flat.")
+        calls = read_list(CALLS_FILE, "calls")
+        if any(c["unit_id"] == unit_id and c.get("kind") in ("renewal", "callback", "manual") and c["status"] in ("queued", "ringing") for c in calls):
+            raise ValueError("Mia is already calling this resident.")
+        calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": tenant.get("name"), "kind": "manual",
+                      "case": "manual", "status": "queued", "channel": "browser", "urgent": False, "created_at": now_iso(),
+                      "history": [{"status": "queued", "at": now_iso()}]})
+        write_json(CALLS_FILE, {"calls": calls})
+        add_event("call_queued", f"Staff asked Mia to call {tenant.get('name')} now.", "staff", unit_id)
+        self.send_json(200, {"ok": True})
 
     def update_call(self, call_id: str, body: dict) -> None:
         """The resident's phone/browser reports what happened to an outbound call."""
@@ -1338,13 +1501,14 @@ class DemoHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--demo-date", type=date.fromisoformat)
+    parser.add_argument("--demo-date", type=date.fromisoformat, help="Demo day to start on and to return to on reset (default 2026-11-20)")
     args = parser.parse_args()
-    RESET_DATE = args.demo_date
-    if args.demo_date:
-        write_json(CLOCK_FILE, {"today": args.demo_date.isoformat()})
+    # A fixed demo calendar, so the scenarios in DEMO.md happen on the same dates whatever day we present.
+    RESET_DATE = args.demo_date or DEFAULT_DEMO_DATE
+    if args.demo_date or not CLOCK_FILE.exists():
+        write_json(CLOCK_FILE, {"today": RESET_DATE.isoformat()})
     run = run_trigger("server start")
-    print(f"Daily trigger run for {run['date']}: {run['scanned']} units scanned, {run['matched']} portal offers.")
+    print(f"Demo date {run['date']}: {run['scanned']} flats checked, {run['matched']} renewals (Mia calls), {run['attention']} need a person.")
     server = ThreadingHTTPServer((HOST, args.port), DemoHandler)
     print(f"Reltix demo is running at http://{HOST}:{server.server_port}")
     print("Press Ctrl+C to stop it.")

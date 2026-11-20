@@ -15,16 +15,16 @@
     <a class="brand" href="/" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""><span class="brand-sub">centrix</span></a>
     <p class="nav-label">Menu</p>
     <nav class="side-nav">
-      <a href="#overview" class="active"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
+      <a href="#inbox" class="active"><svg class="icon" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v5H4v-5z"/></svg>Needs you<span class="nav-count" id="nav-inbox-count"></span></a>
+      <a href="#overview"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
       <a href="#flats"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>Flats</a>
       <a href="#case"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Live case</a>
       <a href="#partner"><svg class="icon" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Energy partner</a>
     </nav>
     <div class="side-card">
-      <strong>Demo controls</strong>
-      <span>Move the date to open renewal offers, or start over.</span>
-      <div id="clock-slot"></div>
-      <button class="button button-primary" type="button" data-run="now">Run today’s check</button>
+      <strong>Demo</strong>
+      <span>Use the date bar to move time. Reset puts everything back to the start.</span>
+      <button class="button" type="button" data-run="now">Run today’s check again</button>
       <button class="button" id="demo-reset" type="button">Reset demo</button>
     </div>
   </aside>
@@ -38,9 +38,33 @@
       <div class="topbar-right"><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
     </header>
 
+    <div class="datebar" aria-label="Demo date">
+      <div id="clock-slot"></div>
+      <button class="chip-btn" type="button" data-advance="day">+1 day</button>
+      <button class="chip-btn" type="button" data-advance="week">+1 week</button>
+      <button class="chip-btn primary" type="button" data-advance="next" id="next-event">Next event ▸</button>
+      <span class="muted small" id="datebar-note"></span>
+    </div>
+
     <section class="kpi-row" id="overview" aria-label="Key figures"><div id="kpis" class="kpis"></div></section>
 
-    <div class="dash-grid">
+    <div class="dash-cols">
+     <div class="col-main">
+      <section class="panel panel-inbox" id="inbox" aria-labelledby="inbox-title">
+        <div class="panel-head"><h2 id="inbox-title">Needs you</h2><span class="muted small" id="inbox-sub"></span></div>
+        <div id="inbox-list" class="inbox-list"></div>
+      </section>
+
+      <section class="panel panel-flats" aria-label="Flats">
+        <a id="flats"></a>
+        <div id="portfolio" class="portfolio" aria-live="polite"></div>
+      </section>
+     </div>
+     <div class="col-side">
+      <section class="panel panel-feed" aria-labelledby="feed-title">
+        <div class="panel-head"><h2 id="feed-title">Live activity</h2><span class="muted small">residents, Mia, supplier</span></div>
+        <ol id="feed" class="feed"></ol>
+      </section>
       <section class="panel panel-network" aria-labelledby="network-title">
         <div class="panel-head"><h2 id="network-title">Connection flow</h2><span class="muted small" id="network-sub">Flat —</span></div>
         <div id="network" class="network"></div>
@@ -82,10 +106,8 @@
         <p class="notice">Resident consent is required before personal data is shared or an order is placed.</p>
       </section>
 
-      <section class="panel panel-flats" aria-label="Today's run">
-        <a id="flats"></a>
-        <div id="portfolio" class="portfolio" aria-live="polite"></div>
-      </section>
+     </div>
+    </div>
 
       <section class="panel panel-partner view active staff-partner" id="company-view" aria-labelledby="company-title">
         <a id="partner"></a>
@@ -108,7 +130,7 @@
         </details>
         <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
       </section>
-    </div>
+    
     <footer class="app-footer">Reltix · local demo · sample data</footer>
   </div>
 </body>

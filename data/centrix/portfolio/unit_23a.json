@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_23a",
+  "property": {
+    "address": "Zollernstraße 40, 52072 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 3,
+    "size_sqm": 80,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740570",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_o10",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_410",
+    "name": "Oliver Schmitt",
+    "email": "oliver@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2024-02-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 750,
+      "start": "2024-02-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_23a",
+      "customer_contact_id": "c_410",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 3000,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-18",
+      "current_monthly_price_eur": 69.0
+    }
+  ]
+}
