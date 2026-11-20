@@ -22,7 +22,8 @@ class MeterHandoverTests(unittest.TestCase):
         self.handler = object.__new__(main.DemoHandler)
         self.handler.send_json = self.capture
         self.handler.reset_demo()
-        self.offer_id = main.read_json(main.OFFERS_FILE)["offers"][0]["offer_id"]
+        self.offer = main.read_json(main.OFFERS_FILE)["offers"][0]
+        self.offer_id = self.offer["offer_id"]
 
     def capture(self, code, result):
         self.code, self.result = code, result
@@ -40,7 +41,8 @@ class MeterHandoverTests(unittest.TestCase):
         main.write_json(main.unit_path(unit_id), value)
 
     def order(self, unit_id="unit_4b", chosen_meter_id=None):
-        payload = {"unit_id": unit_id, "offer_id": self.offer_id, "consent_given": True}
+        payload = {"unit_id": unit_id, "offer_id": self.offer_id, "offer_version": main.offer_version(self.offer),
+                   "submission_id": "meter-" + unit_id, "consent_given": True}
         if chosen_meter_id:
             payload["meter_id"] = chosen_meter_id
         result = self.post("orders", **payload)
@@ -93,7 +95,8 @@ class MeterHandoverTests(unittest.TestCase):
                   "switch_reading": {"value_kwh": None, "read_at": None}}
         unit["unit"]["meters"].append(second)
         self.save_unit("unit_4b", unit)
-        self.post("orders", unit_id="unit_4b", offer_id=self.offer_id, consent_given=True)
+        self.post("orders", unit_id="unit_4b", offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
+                  submission_id="missing-meter-order", consent_given=True)
         self.assertEqual(self.code, 400)
         first_id = main.electricity_meters(unit)[0][2]
         second_id = main.electricity_meters(unit)[1][2]
@@ -122,7 +125,8 @@ class MeterHandoverTests(unittest.TestCase):
         unit = self.unit("unit_3b")
         unit["unit"]["meters"] = []
         self.save_unit("unit_3b", unit)
-        self.post("orders", unit_id="unit_3b", offer_id=self.offer_id, consent_given=True)
+        self.post("orders", unit_id="unit_3b", offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
+                  submission_id="no-meter-order", consent_given=True)
         self.assertEqual(self.code, 400)
         self.post("meter", unit_id="unit_3b", number="1ESY116000003B")
         self.assertEqual(self.code, 200)
