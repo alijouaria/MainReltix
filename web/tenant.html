@@ -42,6 +42,26 @@
         <p class="fine-print">Demo estimates. Choosing here does not order or sign anything.</p>
       </article>
 
+      <section class="complaint-card" aria-labelledby="complaint-title">
+        <div class="complaint-copy">
+          <span class="complaint-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.35 1.9.68 2.79a2 2 0 0 1-.45 2.11L8.07 9.93a16 16 0 0 0 6 6l1.31-1.31a2 2 0 0 1 2.11-.45c.89.33 1.83.56 2.79.68A2 2 0 0 1 22 16.92Z"/></svg>
+          </span>
+          <div class="complaint-text">
+            <p class="complaint-kicker">Need help with something at home?</p>
+            <h2 id="complaint-title">Report a problem</h2>
+            <p>Call our AI agent about a repair, heating issue, leak, or another concern. It will help capture the details for your property team.</p>
+          </div>
+        </div>
+        <div class="complaint-action">
+          <button class="button button-primary call-agent-button" type="button" disabled aria-describedby="call-agent-note">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.35 1.9.68 2.79a2 2 0 0 1-.45 2.11L8.07 9.93a16 16 0 0 0 6 6l1.31-1.31a2 2 0 0 1 2.11-.45c.89.33 1.83.56 2.79.68A2 2 0 0 1 22 16.92Z"/></svg>
+            Call AI agent
+          </button>
+          <p class="call-agent-note" id="call-agent-note">Coming soon: voice calling is not connected yet.</p>
+        </div>
+      </section>
+
       <details class="fold">
         <summary><span>Meter reading</span><span class="badge badge-soft" id="reading-status">Not entered</span></summary>
         <p class="muted small">Only needed when the supplier changes and the meter isn’t read remotely.</p>
