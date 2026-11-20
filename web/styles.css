@@ -153,17 +153,6 @@ label span { display: block; margin-bottom: 4px; font-size: 0.85rem; color: var(
 }
 
 /* partner inbox */
-.steps { display: flex; gap: 6px; list-style: none; margin: 20px 0 12px; padding: 0; counter-reset: step; }
-.steps li { flex: 1; padding: 8px 6px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 0.8rem; text-align: center; counter-increment: step; }
-.steps li::before { content: counter(step) ". "; }
-.steps li.done { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
-.steps li.done::before { content: "✓ "; }
-.steps li.now { border-color: var(--accent); color: var(--ink); font-weight: 600; }
-.order-card { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: 0 12px 32px -18px rgb(15 42 29 / .2); }
-.order-card .detail-row { font-size: 0.95rem; }
-.order-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
-.order-actions .button { flex: 1; min-height: 52px; font-size: 1rem; }
-.order-hint { margin: 12px 0 0; }
 .timeline-label { margin-top: 28px; }
 .text-button { border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; min-height: 40px; padding: 0; }
 .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--line); }
@@ -180,7 +169,6 @@ label span { display: block; margin-bottom: 4px; font-size: 0.85rem; color: var(
 @media (max-width: 640px) {
   .plan-row { grid-template-columns: 1fr 1fr; }
   .plan-row label:first-child { grid-column: 1 / -1; }
-  .steps li { font-size: 0.7rem; padding: 6px 2px; }
 }
 
 /* call channel */

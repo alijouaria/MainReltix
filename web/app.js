@@ -297,22 +297,6 @@ byId("offers-form").addEventListener("submit", async (event) => {
 
 /* ---------- Partner inbox (practice mode, browser only) ---------- */
 const job = { status: "submitted", timeline: [] };
-const STEPS = [["submitted", "New"], ["received", "Accepted"], ["confirmed", "Contract ready"], ["active", "Power on"]];
-const STEP_OF = { submitted: 0, received: 1, needs_input: 1, confirmed: 2, active: 3, rejected: 0, cancelled: 2 };
-const ACTIONS = {
-  submitted: [["received", "Accept order"], ["rejected", "I can’t take this"]],
-  received: [["confirmed", "Contract is ready"], ["needs_input", "I need more info"]],
-  needs_input: [["received", "Got the info"]],
-  confirmed: [["active", "Power has started"]],
-};
-const HINTS = {
-  submitted: "Accepting means you’ll prepare the contract. You don’t need to call the customer.",
-  received: "When the contract is ready, tap the button. We tell the customer for you.",
-  needs_input: "We asked the customer for the meter reading. Tap when it arrives.",
-  confirmed: "Tap on the start day once the power runs on your plan.",
-  active: "All done. The contract is saved on the home’s record.",
-  rejected: "Order declined. The customer will be shown other plans.",
-};
 // What the voice assistant says at each step. Replace with the ElevenLabs agent later.
 const CALL_LINES = {
   submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.customer} at ${o.address} would like your ${o.plan} plan at ${o.price} a month, starting ${prettyDate(o.start)}.`, `Can you take this order? Just say yes or no.`],
@@ -354,16 +338,8 @@ function jobOrder() {
 
 function renderJob() {
   const o = jobOrder();
-  if (!o) { byId("order-details").innerHTML = '<p class="muted">No orders yet.</p>'; return; }
+  if (!o) return;
   if (!job.timeline.length) job.timeline.push({ status: "submitted", at: new Date() });
-  const rows = [["Customer", o.customer], ["Address", o.address], ["Plan", `${o.plan} · ${o.price} / month`], ["Start date", prettyDate(o.start)],
-    ["Meter number", o.meter], ["Meter reading", o.reading], ["Old supplier", `${o.old} (you cancel it)`]];
-  byId("order-details").innerHTML = rows.map(([k, v]) => `<div class="detail-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("");
-  const current = STEP_OF[job.status];
-  byId("order-steps").innerHTML = STEPS.map(([, label], i) => `<li class="${i < current || job.status === "active" ? "done" : i === current ? "now" : ""}">${esc(label)}</li>`).join("");
-  const actions = ACTIONS[job.status] || [];
-  byId("report-actions").innerHTML = actions.map(([s, label], i) => `<button class="button${i === 0 ? " button-primary" : ""}" data-status="${s}" type="button">${esc(label)}</button>`).join("");
-  byId("order-hint").textContent = HINTS[job.status] || "";
   byId("call-script").innerHTML = (CALL_LINES[job.status] || (() => []))(o)
     .map((line) => `<div class="call-line"><b>Assistant</b> ${esc(line)}</div>`).join("")
     + (CALL_REPLIES[job.status] ? `<div class="call-line you"><b>You say</b> ${esc(CALL_REPLIES[job.status])}</div>` : "");
@@ -374,13 +350,6 @@ function renderJob() {
   }).join("");
 }
 
-byId("report-actions").addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-status]");
-  if (!button) return;
-  job.status = button.dataset.status;
-  job.timeline.push({ status: job.status, at: new Date() });
-  renderJob();
-});
 byId("job-reset").addEventListener("click", () => { Object.assign(job, { status: "submitted", timeline: [] }); renderJob(); });
 
 /* ---------- Plans editor: simple rows, saved through the existing offers form ---------- */
