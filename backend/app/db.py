@@ -5,15 +5,16 @@ from app import config
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS buildings (
     id TEXT PRIMARY KEY, address TEXT, city TEXT, year_built INTEGER,
-    heating_type TEXT, energy_class TEXT
+    heating_type TEXT, energy_class TEXT, energy_cert_valid_until TEXT
 );
 CREATE TABLE IF NOT EXISTS units (
     id TEXT PRIMARY KEY, building_id TEXT REFERENCES buildings(id),
-    floor INTEGER, sqm REAL
+    floor INTEGER, sqm REAL, rooms INTEGER
 );
 CREATE TABLE IF NOT EXISTS people (
-    id INTEGER PRIMARY KEY, name TEXT, role TEXT CHECK (role IN ('tenant', 'owner')),
-    unit_id TEXT, building_id TEXT, email TEXT, phone TEXT
+    id INTEGER PRIMARY KEY, name TEXT, role TEXT CHECK (role IN ('tenant', 'owner', 'caretaker')),
+    unit_id TEXT, building_id TEXT, email TEXT, phone TEXT,
+    move_in TEXT, move_out TEXT, key_access INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tenant_prefs (
     unit_id TEXT PRIMARY KEY REFERENCES units(id), access_windows TEXT,
@@ -57,8 +58,28 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY, case_id INTEGER, unit_id TEXT, person_id INTEGER,
-    direction TEXT, channel TEXT, body TEXT, status TEXT, created_at TEXT,
+    direction TEXT,
+    channel TEXT CHECK (channel IN ('portal', 'email', 'sms', 'voice')), body TEXT, status TEXT, created_at TEXT,
     payload TEXT
+);
+CREATE TABLE IF NOT EXISTS meters (
+    id INTEGER PRIMARY KEY, unit_id TEXT, building_id TEXT,
+    type TEXT CHECK (type IN ('electricity', 'heat_cost_allocator', 'heat_meter', 'gas')),
+    number TEXT, provider TEXT, remote_read INTEGER
+);
+CREATE TABLE IF NOT EXISTS heating_systems (
+    id INTEGER PRIMARY KEY, building_id TEXT, type TEXT, make TEXT, model TEXT,
+    installed_year INTEGER, last_service TEXT, maintenance_contract_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY, unit_id TEXT, building_id TEXT, party_id INTEGER,
+    kind TEXT CHECK (kind IN ('lease', 'maintenance', 'metering', 'framework')),
+    partner TEXT, start TEXT, "end" TEXT, terms TEXT
+);
+CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY, case_id INTEGER, unit_id TEXT,
+    kind TEXT CHECK (kind IN ('invoice', 'photo', 'service_report', 'lease_annex')),
+    title TEXT, created_at TEXT, payload TEXT
 );
 """
 
