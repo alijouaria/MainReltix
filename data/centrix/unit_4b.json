@@ -20,6 +20,10 @@
         "last_reading": {
           "value_kwh": 18420,
           "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
         }
       }
     ]
@@ -55,30 +59,6 @@
       "annual_consumption_kwh": 2400,
       "current_monthly_price_eur": 82.5,
       "meter_reading_required_at_switch": true
-    }
-  ],
-  "renewal_offers": [
-    {
-      "offer_id": "offer_green_12m",
-      "partner": "Example Green Energy GmbH",
-      "product": "Green Home 12",
-      "category": "electricity",
-      "estimated_monthly_price_eur": 78.4,
-      "contract_months": 12,
-      "renewable_share_percent": 100,
-      "available_from": "2027-01-01",
-      "requires_meter_reading": true
-    },
-    {
-      "offer_id": "offer_flex_12m",
-      "partner": "Example Green Energy GmbH",
-      "product": "Flex Home 12",
-      "category": "electricity",
-      "estimated_monthly_price_eur": 74.9,
-      "contract_months": 12,
-      "renewable_share_percent": 50,
-      "available_from": "2027-01-01",
-      "requires_meter_reading": true
     }
   ]
 }
