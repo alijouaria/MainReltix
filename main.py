@@ -68,6 +68,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(payload)
 
