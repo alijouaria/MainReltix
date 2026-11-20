@@ -51,12 +51,13 @@ def test_status_transitions_append_events(client, conn):
     r = client.post(f"/partner/jobs/{jid}/status",
                     json={"status": "scheduled", "slot": "2026-11-21T09:00:00"})
     assert r.json()["scheduled_at"] == "2026-11-21T09:00:00"
+    client.post(f"/partner/jobs/{jid}/status", json={"status": "on_site"})
     r = client.post(f"/partner/jobs/{jid}/status", json={
         "status": "completed", "outcome": {"fixed": True},
         "invoice": {"amount_eur": 380.0, "file_name": "inv-1.pdf"}})
     assert r.json()["status"] == "completed"
     ev = _events(conn)[n0:]
-    assert [e["kind"] for e in ev] == ["job_accepted", "job_scheduled", "job_completed"]
+    assert [e["kind"] for e in ev] == ["job_accepted", "job_scheduled", "job_on_site", "job_completed"]
     assert all(e["actor"] == "partner:1" for e in ev)
     doc = conn.execute("SELECT * FROM documents WHERE kind='invoice' AND case_id=1 "
                        "ORDER BY id DESC").fetchone()
@@ -75,3 +76,27 @@ def test_invalid_status_422(client):
 
 def test_unknown_job_404(client):
     assert client.get("/partner/jobs/9999").status_code == 404
+
+
+def _st(client, jid, **body):
+    return client.post(f"/partner/jobs/{jid}/status", json=body)
+
+
+def test_illegal_transition_409(client):
+    jid = client.post("/partner/jobs", json=JOB).json()["job_id"]
+    assert _st(client, jid, status="completed").status_code == 409
+    assert _st(client, jid, status="declined").status_code == 200
+    assert _st(client, jid, status="accepted").status_code == 409
+
+
+def test_scheduled_requires_slot_422(client):
+    jid = client.post("/partner/jobs", json=JOB).json()["job_id"]
+    _st(client, jid, status="accepted")
+    assert _st(client, jid, status="scheduled").status_code == 422
+
+
+def test_slot_outside_access_windows_409(client):
+    jid = client.post("/partner/jobs", json=JOB).json()["job_id"]
+    _st(client, jid, status="accepted")
+    assert _st(client, jid, status="scheduled", slot="2026-11-21T15:00:00").status_code == 409
+    assert _st(client, jid, status="scheduled", slot="2026-11-21T08:00:00").status_code == 200

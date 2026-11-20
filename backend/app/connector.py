@@ -4,7 +4,9 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from app import db
 from app.clock import clock
@@ -51,6 +53,25 @@ class StatusIn(_Strict):
     outcome: dict | None = None
     invoice: Invoice | None = None
 
+    @model_validator(mode="after")
+    def _slot_required(self):
+        if self.status == "scheduled" and not self.slot:
+            raise ValueError("status 'scheduled' requires slot")
+        return self
+
+
+# Allowed lifecycle; mirrors docs/connector-spec.md section 5.
+TRANSITIONS: dict[str, set[str]] = {
+    "offered": {"accepted", "declined"},
+    "accepted": {"scheduled", "declined"},
+    "scheduled": {"scheduled", "on_site"},
+    "on_site": {"completed", "needs_followup"},
+}
+
+
+class ConflictError(ValueError):
+    """Update is valid JSON but conflicts with the job's current state."""
+
 
 def get_conn():
     """Overridable dependency (app.dependency_overrides) yielding a DB connection."""
@@ -91,6 +112,14 @@ def create_job(conn: sqlite3.Connection, job: JobIn) -> dict:
 
 def update_status(conn: sqlite3.Connection, job_id: int, upd: StatusIn) -> dict:
     job = get_job(conn, job_id)
+    if upd.status not in TRANSITIONS.get(job["status"], set()):
+        raise ConflictError(f"illegal transition {job['status']} -> {upd.status}")
+    if upd.status == "scheduled":
+        slot = datetime.fromisoformat(upd.slot)
+        windows = job["payload"].get("access_windows", [])
+        if not any(datetime.fromisoformat(w["start"]) <= slot <= datetime.fromisoformat(w["end"])
+                   for w in windows):
+            raise ConflictError("slot outside tenant access_windows")
     now = _now()
     scheduled_at = upd.slot if upd.status == "scheduled" and upd.slot else job["scheduled_at"]
     conn.execute(
@@ -117,6 +146,8 @@ def _or_404(fn, *args):
         return fn(*args)
     except KeyError:
         raise HTTPException(404, "job not found")
+    except ConflictError as e:
+        raise HTTPException(409, str(e))
 
 
 @router.post("/jobs")

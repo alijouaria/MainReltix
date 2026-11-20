@@ -11,10 +11,10 @@ Each partner registers one profile. Today it is stored as a `craftsmen` row; `pa
 | `id` | `partner_id` used in every call |
 | `name` | Display name |
 | `trades` | Service categories offered, e.g. `heating`, `plumbing`, `electrical`, `energy_supply` |
-| `job_types` | Catalogue of orderable services, e.g. `valve_replacement_balancing`, `boiler_service` |
+| `job_types` | *Planned field.* Today derived from `craftsmen.trades`. Catalogue of orderable services, e.g. `valve_replacement_balancing`, `boiler_service` |
 | `callout_eur`, `hourly_eur` | Price basis for estimates (parts quoted per job type) |
 | `distance_km`, `rating` | Inputs to ranking |
-| `channel` | `api`, `voice`, or `email` (see 6) |
+| `channel` | *Planned field.* `api`, `voice`, or `email` (see 7). Today every partner defaults to the voice agent. |
 
 ## 2. Eligibility rules
 
@@ -59,16 +59,20 @@ Response: `{"job_id": 7, "status": "offered"}`. `GET /partner/jobs/{job_id}` ret
 
 Allowed `status` values (any other value returns 422):
 
-```
-offered (set by centrix) -> accepted -> scheduled -> on_site -> completed
-                         \-> declined                        \-> needs_followup
-```
+| From | Allowed next |
+|---|---|
+| `offered` (set by centrix) | `accepted`, `declined` |
+| `accepted` | `scheduled`, `declined` |
+| `scheduled` | `scheduled` (reschedule), `on_site` |
+| `on_site` | `completed`, `needs_followup` |
+
+`completed`, `declined` and `needs_followup` are terminal for the job. Any other move returns 409.
 
 Effects in centrix:
 - Every update appends a `case_events` row: actor `partner:<id>`, kind `job_<status>`.
-- `scheduled` sets the job's `scheduled_at` from `slot`.
+- `scheduled` requires `slot` (422 if missing). The slot must fall inside one of the job's `access_windows` (409 otherwise). It sets the job's `scheduled_at`.
 - `completed` with `invoice` files an `invoice` document on the case and unit.
-- `needs_followup` reopens the case for the next step on the escalation ladder.
+- `needs_followup` is only recorded by the connector. The orchestrator (escalation ladder) reads the event and decides the next step.
 
 ## 6. Consent and data minimisation
 
@@ -92,6 +96,6 @@ Example: an electrician, or an energy supplier offering tariff switches.
 3. Define the eligibility inputs: radius, contract kind, auto-approval limit.
 4. List the `consent_scope` values the job types need.
 5. Choose the channel. Use the API, or a voice or email adapter that emits `StatusIn`.
-6. Run the contract tests in `backend/tests/test_connector.py` against the new partner.
+6. Replay the contract tests in `backend/tests/test_connector.py` with the new partner's ids and payloads. They cover intake, the transition rules, slot checks, invoice filing and rejection of consumption data.
 
 No schema change and no new endpoint are needed.
