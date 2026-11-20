@@ -66,6 +66,28 @@
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5:** Commit `feat: drift, short-cycling and service-due detectors`.
 
+### Task 2b: Complete the centrix record
+
+PDF "What centrix knows": properties & units (address, size, building year, heating type, energy certificate, meters), people (contacts, move-in/out), contracts (leases, rents, service contracts), cases (with emails and documents), communication (every email, call, message linked to the property). Fill the gaps in the mocked store.
+
+**Files:**
+- Modify: `backend/app/db.py`, `backend/app/seed.py`
+- Test: `backend/tests/test_centrix_record.py`
+
+**Interfaces:**
+- Produces (new/changed tables):
+  - `units` + `rooms INTEGER`; `buildings` + `energy_cert_valid_until TEXT`.
+  - `people` + `move_in TEXT, move_out TEXT`; role CHECK extended to `tenant|owner|caretaker`.
+  - `meters(id, unit_id, building_id, type: electricity|heat_cost_allocator|heat_meter|gas, number, provider, remote_read INTEGER)`.
+  - `heating_systems(id, building_id, type, make, model, installed_year, last_service, maintenance_contract_id)`.
+  - `contracts(id, unit_id, building_id, party_id, kind: lease|maintenance|metering|framework, partner, start, end, terms JSON)`.
+  - `documents(id, case_id, unit_id, kind: invoice|photo|service_report|lease_annex, title, created_at, payload JSON)`.
+  - `messages.channel` values: `portal|email|sms|voice`; voice rows hold transcript in payload. This table is the communication log.
+- Seed values: 2a rooms 3, sqm per Task 1; tenant 2a "Lena Hoffmann" move_in 2026-03-01 (others varied, one unit with move_out 2026-12-31); caretaker "Jonas Klein" with key access; building cert valid_until 2029-03-31; heating system Vaillant ecoTEC plus VC 206, installed 2009, last_service 2025-09-18, maintenance contract with craftsman #2; per unit: electricity meter (number like `1ESY11601234xx`) + heat cost allocator (provider ista, remote_read 1); one lease per tenant (rent_cold_eur, start = move_in); metering contract ista; framework contracts for craftsmen #1–#4 carrying callout/hourly rates; lease annex document per tenant capturing monitoring consent + access windows.
+- [ ] **Step 1:** Tests: `test_2a_snapshot_complete` (2a has 2 meters, a lease with rent, tenant move_in, lease_annex document), `test_heating_system_has_model`, `test_framework_contract_rates_match_craftsmen`, `test_caretaker_exists`. Existing tests stay green.
+- [ ] **Step 2:** Run → FAIL. **Step 3:** Implement. **Step 4:** Run full suite → PASS.
+- [ ] **Step 5:** Commit `feat: complete mocked centrix record (meters, contracts, documents, heating system)`.
+
 ### Task 3: Ladder, matching, cost estimate
 
 **Files:**
