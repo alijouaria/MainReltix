@@ -164,7 +164,7 @@ def agent_variables(unit: dict) -> dict:
     energy = next((c for c in unit.get("contracts", []) if c.get("type") == "energy_supply" and c.get("status") == "active"), {})
     name = (unit.get("tenant") or {}).get("name", "")
     expiry = date.fromisoformat(energy["expiry_date"]) if energy.get("expiry_date") else None
-    partner = read_json(OFFERS_FILE)
+    partner = read_partner()
     price = float(energy.get("current_monthly_price_eur") or 0)
     return {
         "tenant_first_name": name.split(" ")[0], "tenant_last_name": " ".join(name.split(" ")[1:]),
@@ -255,7 +255,7 @@ def run_trigger(source: str = "scheduled") -> dict:
     renewal window (today >= expiry - renewal_notice_days). Every unit gets a decision and a reason."""
     today = demo_today()
     daily_order_follow_ups(today)
-    partner = read_json(OFFERS_FILE)
+    partner = read_partner()
     prefixes = partner.get("eligibility_postcode_prefixes", DEFAULT_POSTCODE_PREFIXES)
     existing_orders = read_orders()
     results = []
@@ -296,16 +296,34 @@ def run_trigger(source: str = "scheduled") -> dict:
         cycle = renewal_cycle(energy)
         open_in_cycle = any(o.get("subject", {}).get("unit_id") == unit_id
                             and (o.get("renewal_cycle") or renewal_cycle(o.get("previous_contract", {}))) == cycle
-                            and o.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed")
+                            and o.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed", "active")
                             for o in existing_orders)
         if open_in_cycle:
             decide("skipped", "Order already in progress.")
             continue
         postcode = re.search(r"\b(\d{5})\b", address)
-        if postcode and not any(postcode.group(1).startswith(p) for p in prefixes):
-            decide("attention", f"In the window, but no partner serves postcode {postcode.group(1)}. Property manager notified; no call.")
+        if not postcode:
+            reason = "In the renewal window, but the postcode is missing or malformed. Staff must verify supplier coverage before ordering."
+            decide("attention", reason)
+            unit.setdefault("renewal_case", {})["coverage_review"] = {"status": "unknown", "reason": reason, "at": now_iso()}
+            unit["renewal_case"]["needs_person"] = reason
+            write_json(unit_path(unit_id), unit)
+            add_event("coverage_review", reason, "centrix", unit_id)
+            continue
+        if not any(postcode.group(1).startswith(p) for p in prefixes):
+            reason = f"In the window, but no partner serves postcode {postcode.group(1)}. Property manager notified; no order can be placed."
+            decide("attention", reason)
+            unit.setdefault("renewal_case", {})["coverage_review"] = {"status": "unsupported", "postcode": postcode.group(1), "reason": reason, "at": now_iso()}
+            unit["renewal_case"]["needs_person"] = reason
+            write_json(unit_path(unit_id), unit)
             add_event("detected", f"Contract ends {energy['expiry_date']}; no partner covers {postcode.group(1)}. Needs a person.", "centrix", unit_id)
             continue
+        coverage_review = unit.get("renewal_case", {}).get("coverage_review")
+        if coverage_review:
+            unit["renewal_case"].pop("coverage_review", None)
+            if str(unit.get("renewal_case", {}).get("needs_person", "")).startswith("In the renewal window, but"):
+                unit["renewal_case"].pop("needs_person", None)
+            write_json(unit_path(unit_id), unit)
         meter = next((m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"), {})
         notes = []
         if today > expiry:
@@ -333,10 +351,76 @@ def offer_version(offer: dict) -> str:
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def offer_fingerprint(offer: dict) -> str:
+    fields = {key: offer.get(key) for key in ("product", "estimated_monthly_price_eur", "contract_months",
+                                               "renewable_share_percent", "requires_meter_reading")}
+    return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def assign_offer_ids(offers: list, previous: list | None = None) -> list:
+    """Retain IDs across edits and row reorders; distinguish plans sharing a name and term."""
+    previous = [dict(item) for item in (previous or []) if item.get("offer_id")]
+    rows = [dict(item) for item in offers]
+    used_ids = {item.get("offer_id") for item in rows if item.get("offer_id")}
+    unmatched_old = list(previous)
+    for row in rows:
+        if row.get("offer_id"):
+            unmatched_old = [old for old in unmatched_old if old["offer_id"] != row["offer_id"]]
+            continue
+        match = next((old for old in unmatched_old if offer_fingerprint(old) == offer_fingerprint(row)), None)
+        if match:
+            row["offer_id"] = match["offer_id"]
+            unmatched_old.remove(match)
+            used_ids.add(row["offer_id"])
+    old_groups: dict[tuple, list] = {}
+    new_groups: dict[tuple, list] = {}
+    for old in unmatched_old:
+        old_groups.setdefault((old.get("product"), old.get("contract_months")), []).append(old)
+    for row in rows:
+        if not row.get("offer_id"):
+            new_groups.setdefault((row.get("product"), row.get("contract_months")), []).append(row)
+    for group, new_rows in new_groups.items():
+        old_rows = sorted(old_groups.get(group, []), key=lambda item: item["offer_id"])
+        for row, old in zip(sorted(new_rows, key=offer_fingerprint), old_rows):
+            row["offer_id"] = old["offer_id"]
+            used_ids.add(row["offer_id"])
+    for row in sorted((item for item in rows if not item.get("offer_id")), key=offer_fingerprint):
+        slug = re.sub(r"[^a-z0-9]+", "_", str(row.get("product", "offer")).lower()).strip("_") or "offer"
+        stem = f"{slug}_{int(row.get('contract_months') or 0)}m_{offer_fingerprint(row)[:10]}"
+        candidate = stem
+        suffix = 1
+        while candidate in used_ids:
+            candidate = f"{stem}_{suffix}"
+            suffix += 1
+        row["offer_id"] = candidate
+        used_ids.add(candidate)
+    return rows
+
+
+def read_partner() -> dict:
+    """Normalize legacy catalogue rows once so every API uses persistent offer IDs."""
+    partner = json.loads(OFFERS_FILE.read_text(encoding="utf-8-sig"))
+    offers = assign_offer_ids(partner.get("offers", []))
+    if offers != partner.get("offers", []):
+        partner["offers"] = offers
+        write_json(OFFERS_FILE, partner)
+    return partner
+
+
 def renewal_cycle(contract: dict) -> str | None:
     expiry = contract.get("expiry_date") or contract.get("ends")
     contract_id = contract.get("contract_id") or contract.get("contractId")
     return f"{contract_id or 'legacy'}:{expiry}" if expiry else None
+
+
+def postcode_coverage(unit: dict, partner: dict) -> tuple[str, str | None]:
+    address = str(unit.get("property", {}).get("address", ""))
+    match = re.search(r"(?<!\d)(\d{5})(?!\d)", address)
+    if not match:
+        return "unknown", None
+    postcode = match.group(1)
+    prefixes = partner.get("eligibility_postcode_prefixes", DEFAULT_POSTCODE_PREFIXES)
+    return ("eligible" if any(postcode.startswith(str(prefix)) for prefix in prefixes) else "unsupported", postcode)
 
 
 def add_months(start: date, months: int) -> date:
@@ -479,7 +563,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             unit_id = query.get("unit", [latest_active_unit() if following else "unit_4b"])[0]
             try:
                 unit = read_json(unit_path(unit_id))
-                partner = read_json(OFFERS_FILE)
+                partner = read_partner()
                 orders = [o for o in read_orders() if o["subject"]["unit_id"] == unit_id]
                 if role == "owner":
                     order = orders[-1] if orders else {}
@@ -710,7 +794,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         if not text:
             raise ValueError("Enter at least one offer first.")
 
-        partner = read_json(OFFERS_FILE)
+        partner = read_partner()
+        old_offers = partner.get("offers", [])
         offers = []
         for line_number, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
@@ -724,9 +809,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             months = int(months_text)
             if not product or price < 0 or not 0 <= renewable <= 100 or months < 1:
                 raise ValueError(f"Line {line_number}: check the product, price, renewable share and term.")
-            slug = re.sub(r"[^a-z0-9]+", "_", product.lower()).strip("_") or f"offer_{line_number}"
             offers.append({
-                "offer_id": f"{slug}_{months}m",
                 "product": product,
                 "estimated_monthly_price_eur": round(price, 2),
                 "contract_months": months,
@@ -736,7 +819,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             })
         if not offers:
             raise ValueError("Enter at least one offer first.")
-        partner["offers"] = offers
+        partner["offers"] = assign_offer_ids(offers, old_offers)
         write_json(OFFERS_FILE, partner)
         self.send_json(200, {"ok": True, "partner": partner})
 
@@ -763,13 +846,22 @@ class DemoHandler(BaseHTTPRequestHandler):
         case = unit.setdefault("renewal_case", {})
         source = str(body.get("source", "voice"))[:20]
         changes = []
-        partner = read_json(OFFERS_FILE)
+        partner = read_partner()
         if "chosen_offer_id" in body:
             offer = next((o for o in partner.get("offers", []) if o.get("offer_id") == body["chosen_offer_id"]), None)
             if offer is None:
                 raise ValueError("Unknown offer_id.")
+            current_version = offer_version(offer)
+            if body.get("offer_version") != current_version:
+                self.send_json(409, {"error": "This offer changed. Review the current terms before giving consent.",
+                                     "stale_offer": True, "offer_version": current_version})
+                return
             case["chosen_offer_id"] = offer["offer_id"]
-            changes.append(f"chose {offer.get('product')}")
+            case["chosen_offer_version"] = current_version
+            case["chosen_offer_snapshot"] = {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
+                                                                               "contract_months", "renewable_share_percent",
+                                                                               "requires_meter_reading")}
+            changes.append(f"reviewed {offer.get('product')} at €{float(offer.get('estimated_monthly_price_eur') or 0):.2f} for {offer.get('contract_months')} months")
         if "preferred_channel" in body:
             case["preferred_channel"] = "email" if str(body["preferred_channel"]).lower().startswith("e") else "sms"
             changes.append(f"prefers {case['preferred_channel'].upper()}")
@@ -897,7 +989,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         """centrix places an order after the tenant confirmed (spec §5). Only declared fields are sent."""
         unit_id = str(body.get("unit_id", "unit_4b"))
         unit = read_json(unit_path(unit_id))
-        partner = read_json(OFFERS_FILE)
+        partner = read_partner()
         offer = next((item for item in partner.get("offers", []) if item.get("offer_id") == body.get("offer_id")), None)
         if offer is None:
             raise ValueError("Unknown offer_id.")
@@ -906,11 +998,24 @@ class DemoHandler(BaseHTTPRequestHandler):
             self.send_json(409, {"error": "This offer changed. Review the current terms and give consent again.",
                                  "stale_offer": True, "offer": {**offer, "offer_version": current_version}})
             return
+        case = unit.get("renewal_case", {})
+        if case.get("chosen_offer_id") != offer["offer_id"] or case.get("chosen_offer_version") != current_version:
+            self.send_json(409, {"error": "Review this offer and its current terms before giving consent.",
+                                 "stale_offer": True, "offer": {**offer, "offer_version": current_version}})
+            return
         if body.get("consent_given") is not True or body.get("channel", "portal") != "portal":
             raise ValueError("The tenant has not given consent; nothing is shared with the partner.")
 
         meter = next((item for item in unit.get("unit", {}).get("meters", []) if item.get("type") == "electricity"), {})
         reading = meter.get("switch_reading", {}) or {}
+        coverage, postcode = postcode_coverage(unit, partner)
+        if coverage != "eligible":
+            if coverage == "unknown":
+                detail = "The postcode is missing or malformed. Staff must verify supplier coverage before ordering."
+            else:
+                detail = f"No supplier covers postcode {postcode}. Staff must review coverage before ordering."
+            self.send_json(409, {"error": detail})
+            return
         if not (unit.get("tenant") or {}).get("contract_sharing_opt_in") or not portal_offer_available(unit_id):
             raise ValueError("No renewal offer is due for this flat.")
         energy = next((item for item in unit.get("contracts", []) if item.get("type") == "energy_supply" and item.get("status") == "active"), {})
@@ -974,6 +1079,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                                   "cancellation_by": "new_supplier",
                                   "monthly_price_eur": energy.get("current_monthly_price_eur")},
             "consent": {"data_shared": data_shared, "approved_fields": data_shared, "recipient": partner.get("partner"),
+                        "offer_id": offer["offer_id"],
                         "offer_version": current_version, "offer_snapshot": {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
                                                                                                                 "contract_months", "renewable_share_percent")},
                         "given_at": given_at, "channel": channel,
@@ -1197,7 +1303,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         if not history or history[-1]["role"] != "user":
             raise ValueError("Send a user message first.")
 
-        tenant_view = view_for("tenant", read_json(unit_path(str(body.get("unit_id", "unit_4b")))), read_json(OFFERS_FILE))
+        tenant_view = view_for("tenant", read_json(unit_path(str(body.get("unit_id", "unit_4b")))), read_partner())
         context = {"unit": tenant_view["unit"], "energy_partner": tenant_view["partner"]}
         unit = context["unit"]
         partner = context["energy_partner"]
