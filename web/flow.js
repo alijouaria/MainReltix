@@ -503,6 +503,7 @@ function renderNetwork() {
 
 const EVENT_TITLES = {
   detected: "Renewal window detected", call_queued: "Call queued for Mia",
+  staff_review: "Staff review logged",
   call: "Call", choice: "Plan chosen on the call", case: "Resident file updated", reading: "Meter reading", link: "Link sent", declined: "Resident declined",
   callback: "Callback requested", handoff: "Needs a person", consent: "Consent given and signed", order: "Order sent to partner",
   received: "Partner accepted", needs_input: "Partner needs input", confirmed: "Contract confirmed", rejected: "Partner declined",
@@ -593,6 +594,7 @@ function renderPortfolio() {
   const run = portfolio.run;
   const calls = portfolio.calls || [];
   const followups = portfolio.supplier_followups || [];
+  const reviews = portfolio.review_queue || [];
   const callFor = (uid) => calls.filter((c) => c.unit_id === uid).slice(-1)[0];
   const rows = (run?.results || []).map((r) => {
     const [cls, label] = DECISION[r.decision];
@@ -613,7 +615,7 @@ function renderPortfolio() {
       tile("◎", run.scanned, "Flats checked", `${run.matched} matched the trigger today`),
       tile("☎", k.support_calls || 0, "Phone interactions", "Tenant reports and supplier replies", "cyan"),
       tile("✓", k.signed || 0, "Contracts signed", k.monthly_saving_eur ? `€${Math.round(k.monthly_saving_eur * 12)} saved per year` : `${k.active || 0} running`, "emerald"),
-      tile("!", (run.attention || 0) + (k.issues_urgent || 0), "Need a person", `${k.issues_open || 0} open complaints`, "amber"),
+      tile("!", reviews.length, "Need a person", "Data and workflow exceptions in queue", "amber"),
     ].join("");
     if (kpis.dataset.html !== html) { kpis.dataset.html = html; kpis.innerHTML = html; }
   }
@@ -623,6 +625,19 @@ function renderPortfolio() {
   const html = `
     <div class="panel-head"><h2>Today’s run</h2><span class="muted small">${run ? `${esc(prettyDate(run.date))} · ${new Date(run.ran_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(run.source)}` : ""}</span></div>
     <p class="muted small">Matched residents receive a renewal offer in their portal. Phone calls handle complaints and supplier follow-up.</p>
+    <section class="review-queue" aria-label="Property team review queue">
+      <div class="section-label"><span>Needs review</span><span class="count-label">${reviews.length} open</span></div>
+      ${reviews.length ? reviews.map((item) => `<article class="review-item ${item.severity === "urgent" ? "urgent" : ""}">
+        <div class="review-item-head"><div><strong>${esc(item.title)}</strong><span class="muted small">Flat ${esc(item.unit_id.replace("unit_", "").toUpperCase())} · ${esc(item.category.replaceAll("_", " "))}</span></div>
+          <a class="text-button" href="/reltix?unit=${esc(item.unit_id)}">Open case</a></div>
+        <p>${esc(item.reason)}</p><span class="muted small">Source: ${esc(item.source || "Not recorded")}</span>
+        <form class="review-form" data-review="${esc(item.review_id)}" data-unit="${esc(item.unit_id)}">
+          <label class="sr-only" for="review-note-${esc(item.review_id)}">Review note</label>
+          <input id="review-note-${esc(item.review_id)}" name="note" maxlength="300" minlength="5" required placeholder="What did you check or do?">
+          <button class="button" type="submit">Record review</button><span role="status" class="form-message"></span>
+        </form>
+      </article>`).join("") : `<p class="muted small">No open review items. Data checks, coverage and workflow exceptions will appear here.</p>`}
+    </section>
     ${run ? `<div class="run-table-wrap"><table class="run-table"><thead><tr><th>Flat</th><th>Resident</th><th>Decision</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No run yet.</p>`}
     ${followups.length ? `<details class="fold"><summary>Supplier callbacks · ${followups.length} open</summary>${followups.map((f) => `<div class="detail-row"><span>${esc(f.unit_id.replace("unit_", "").toUpperCase())} · ${esc(prettyDate(f.due_date))} · ${esc(f.owner === "property team" ? "Property team owns overdue callback" : "Supplier callback queued")}</span><strong><a href="/supplier?unit=${esc(f.unit_id)}">Open supplier workflow</a></strong></div>`).join("")}</details>` : ""}
     <p class="phone-hint small muted">Supplier phone replies are simulated in the energy partner view.</p>`;
@@ -674,7 +689,7 @@ function render() {
 
 document.addEventListener("submit", async event => {
   const form = event.target;
-  if (form.id !== "problem-form" && form.id !== "finish-dropped-call" && !form.dataset.issue) return;
+  if (form.id !== "problem-form" && form.id !== "finish-dropped-call" && !form.dataset.issue && !form.dataset.review) return;
   event.preventDefault();
   const button = form.querySelector("button");
   if (button.disabled) return;
@@ -682,7 +697,11 @@ document.addEventListener("submit", async event => {
   const data = new FormData(form);
   const feedback = form.querySelector('[role="status"]') || byId("issue-feedback");
   try {
-    if (form.id === "problem-form") {
+    if (form.dataset.review) {
+      const note = String(data.get("note") || "").trim();
+      await post(`/api/reviews/${form.dataset.review}`, { unit_id: form.dataset.unit, note });
+      await loadPortfolio();
+    } else if (form.id === "problem-form") {
       const text = String(data.get("text") || "").trim();
       const ids = complaintFormIds(text);
       await post("/api/issues", { unit_id: UNIT, text: data.get("text"), source: "simulated phone",

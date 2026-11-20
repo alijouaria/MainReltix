@@ -33,6 +33,18 @@ CALLS_FILE = ROOT / "data" / "centrix" / "calls.json"            # outbound call
 DEFAULT_POSTCODE_PREFIXES = ["52", "50", "53"]
 AGENT_ID = "agent_2201m7wp3v2rfrtb1pqbq4rt1a80"  # ElevenLabs agent "Mia"
 EVENTS_FILE = ROOT / "data" / "centrix" / "case_events.json"
+REVIEWS_FILE = ROOT / "data" / "centrix" / "staff_reviews.json"
+# Shared connector field catalogue. Profiles are checked at load time so a partner
+# cannot silently introduce fields the property record and consent flow do not know.
+CONNECTOR_FIELDS = {
+    "unit.address", "unit.postcode", "unit.size_sqm", "unit.rooms", "tenant.name", "tenant.age_over_18",
+    "tenant.move_in", "tenant.move_out", "meter.type", "meter.number", "meter.last_reading",
+    "meter.switch_reading", "usage.annual_kwh_estimate", "previous_contract.supplier",
+    "previous_contract.ends", "previous_contract.monthly_price_eur", "building.year",
+    "building.heating_type", "access_windows", "fault_summary", "start_date",
+    "iban_mandate",
+}
+DEFAULT_REQUIRED_INPUTS = ["tenant.name", "unit.address", "meter.number", "start_date"]
 # Allowed partner status moves for a `sell` partner (connector spec §6). Anything else returns 409.
 TRANSITIONS = {
     "submitted": {"received", "pending", "rejected"},
@@ -155,6 +167,278 @@ def write_orders(orders: list) -> None:
 def read_events(unit_id: str | None = None) -> list:
     events = read_json(EVENTS_FILE).get("events", []) if EVENTS_FILE.exists() else []
     return [item for item in events if unit_id is None or item.get("unit_id", "unit_4b") == unit_id]
+
+
+def _value_hash(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def field_provenance(unit: dict, key: str, value: object) -> dict:
+    record = (unit.get("field_provenance") or {}).get(key)
+    if not record:
+        return {"source": "Legacy record; original source not recorded", "verified_at": None}
+    if record.get("value_hash") != _value_hash(value):
+        return {"source": "Value changed since last verification", "verified_at": None}
+    return record
+
+
+def unit_data_quality(unit: dict) -> list[dict]:
+    """Explain whether workflow-critical facts are usable and where they came from."""
+    today = demo_today()
+    tenant = unit.get("tenant") or {}
+    property_record = unit.get("property") or {}
+    energy = next((item for item in unit.get("contracts", [])
+                   if item.get("type") == "energy_supply" and item.get("status") == "active"), {})
+    meters = electricity_meters(unit)
+    selected_id = (unit.get("unit") or {}).get("selected_electricity_meter_id")
+    meter = next((item for _, item, identity in meters if identity == selected_id), None)
+    if meter is None and len(meters) == 1:
+        meter = meters[0][1]
+    email = str(tenant.get("email") or "").strip()
+    phone = re.sub(r"[^+0-9]", "", str(tenant.get("phone") or ""))
+    contact = email or phone or None
+    contact_valid = bool((email and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email))
+                         or (phone and re.fullmatch(r"\+?[0-9]{8,15}", phone)))
+    fields = [
+        ("property.address", "Property address", property_record.get("address"),
+         bool(re.search(r"\b\d{5}\b", str(property_record.get("address", "")))), "Add a complete address with postcode."),
+        ("tenant.name", "Tenant name", tenant.get("name"), bool(str(tenant.get("name") or "").strip()), "Add the current tenant’s name."),
+        ("tenant.contact", "Tenant contact route", contact, contact_valid,
+         "Add a valid email address or phone number so the resident can be reached."),
+        ("contract.expiry_date", "Energy contract end date", energy.get("expiry_date"),
+         _valid_iso_date(energy.get("expiry_date")), "Add or correct the active contract end date."),
+        ("contract.annual_consumption_kwh", "Annual energy usage", energy.get("annual_consumption_kwh"),
+         _positive_number(energy.get("annual_consumption_kwh")), "Add a positive annual usage estimate."),
+        ("meter.number", "Electricity meter number", meter.get("number") if meter else None,
+         bool(meter and re.fullmatch(r"[A-Za-z0-9-]{5,32}", str(meter.get("number", "")))), "Select the right meter and verify its number."),
+    ]
+    result = []
+    for key, label, value, valid, guidance in fields:
+        provenance = field_provenance(unit, key, value)
+        stale = key == "contract.expiry_date" and valid and date.fromisoformat(str(value)) < today
+        if not valid:
+            status, message, needs_review = "missing_or_invalid", guidance, True
+        elif stale:
+            status, message, needs_review = "outdated", "The active contract end date has passed; confirm the current supply record.", True
+        elif not provenance.get("verified_at"):
+            status = "unverified"
+            message = (f"Value was reported by {provenance['source']}; staff verification is not recorded."
+                       if provenance.get("recorded_at") else "Value is present, but its source and verification date are unknown.")
+            needs_review = True
+        else:
+            status, message, needs_review = "verified", "Verified record.", False
+        signature = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:10]
+        result.append({"field": key, "label": label, "value": value, "status": status,
+                       "message": message, "source": provenance.get("source"),
+                       "recorded_at": provenance.get("recorded_at"), "verified_at": provenance.get("verified_at"),
+                       "needs_review": needs_review,
+                       "signature": signature})
+    last_reading = (meter or {}).get("last_reading") or {}
+    reading_valid = (_nonnegative_number(last_reading.get("value_kwh")) and _valid_iso_date(last_reading.get("read_at"))
+                     and date.fromisoformat(str(last_reading.get("read_at"))) <= today)
+    reading_provenance = field_provenance(unit, "meter.last_reading", last_reading)
+    reading_age = (today - date.fromisoformat(str(last_reading.get("read_at")))).days if reading_valid else None
+    reading_stale = reading_valid and reading_age > 365
+    if not reading_valid:
+        reading_status, reading_message, reading_needs_review = "missing_or_invalid", "Record a valid meter reading and date before handover.", True
+    elif reading_stale:
+        reading_status, reading_message, reading_needs_review = "outdated", f"Last reading is {reading_age} days old; collect a current reading before handover.", True
+    elif not reading_provenance.get("verified_at"):
+        reading_status, reading_message = "unverified", (
+            f"Reading was reported by {reading_provenance['source']}; staff verification is not recorded."
+            if reading_provenance.get("recorded_at") else "Reading is present, but its source and verification date are unknown.")
+        reading_needs_review = True
+    else:
+        reading_status, reading_message, reading_needs_review = "verified", "Verified meter reading.", False
+    result.append({"field": "meter.last_reading", "label": "Last meter reading",
+                   "value": f"{last_reading.get('value_kwh')} kWh · {last_reading.get('read_at')}" if reading_valid else None,
+                   "provenance_value": last_reading,
+                   "status": reading_status, "message": reading_message,
+                   "source": reading_provenance.get("source"), "recorded_at": reading_provenance.get("recorded_at"),
+                   "verified_at": reading_provenance.get("verified_at"),
+                   "needs_review": reading_needs_review,
+                   "signature": hashlib.sha256(str(last_reading).encode("utf-8")).hexdigest()[:10]})
+    if len(meters) > 1 and not selected_id:
+        result.append({"field": "meter.selection", "label": "Electricity meter selection", "value": None,
+                       "status": "missing_or_invalid", "message": "More than one electricity meter is listed; select the meter for this unit.",
+                       "source": "Centrix record", "verified_at": None, "needs_review": True, "signature": str(len(meters))})
+    return result
+
+
+def _valid_iso_date(value: object) -> bool:
+    try:
+        date.fromisoformat(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _positive_number(value: object) -> bool:
+    try:
+        return math.isfinite(float(value)) and float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _nonnegative_number(value: object) -> bool:
+    try:
+        return math.isfinite(float(value)) and float(value) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
+def review_item(unit_id: str, category: str, key: str, title: str, reason: str,
+                source: str = "Centrix workflow", severity: str = "attention") -> dict:
+    suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    return {"review_id": f"{unit_id}:{category}:{suffix}", "unit_id": unit_id, "category": category,
+            "title": title, "reason": reason, "source": source, "severity": severity}
+
+
+def portfolio_review_queue() -> list[dict]:
+    """Unresolved data-quality and exception tasks for the property team."""
+    reviews = read_list(REVIEWS_FILE, "reviews")
+    latest = {item.get("review_id"): item for item in reviews}
+    pending = []
+    orders = read_orders()
+    for unit_id in all_unit_ids():
+        unit = read_json(unit_path(unit_id))
+        quality = unit_data_quality(unit)
+        unverified = [field for field in quality if field["status"] == "unverified"]
+        if unverified:
+            labels = ", ".join(field["label"] for field in unverified)
+            source_summary = ", ".join(f"{field['label']} ({field['source']})" for field in unverified)
+            signature = ",".join(f"{field['field']}:{field['signature']}" for field in unverified)
+            provenance_item = review_item(unit_id, "provenance", signature, "Review record sources",
+                                          f"Check the source and accuracy of: {source_summary or labels}.", "Property data")
+            provenance_item["fields"] = [field["field"] for field in unverified]
+            pending.append(provenance_item)
+        for field in quality:
+            if field["needs_review"] and field["status"] != "unverified":
+                pending.append(review_item(unit_id, "data", f"{field['field']}:{field['signature']}",
+                                           f"Verify {field['label'].lower()}", field["message"], field["source"]))
+        coverage = (unit.get("renewal_case") or {}).get("coverage_review")
+        if coverage and coverage.get("status") in ("unknown", "unsupported"):
+            pending.append(review_item(unit_id, "coverage", str(coverage.get("status")), "Review partner coverage",
+                                       coverage.get("reason", "Partner coverage could not be confirmed.")))
+        case = unit.get("renewal_case") or {}
+        if case.get("needs_person"):
+            pending.append(review_item(unit_id, "case", str(case.get("needs_person")), "Follow up with resident",
+                                       str(case["needs_person"])))
+        for order in orders:
+            if order.get("subject", {}).get("unit_id") != unit_id:
+                continue
+            mismatch = order.get("start_date_mismatch")
+            if mismatch:
+                pending.append(review_item(unit_id, "order", f"{order['order_id']}:{mismatch.get('requested')}:{mismatch.get('proposed')}",
+                                           "Review proposed contract start date",
+                                           f"Partner proposed {mismatch.get('proposed')} instead of {mismatch.get('requested')}. No date has been confirmed."))
+            if order.get("start_unconfirmed"):
+                pending.append(review_item(unit_id, "order", f"{order['order_id']}:start_unconfirmed", "Confirm whether supply started",
+                                           "The supplier has not confirmed that supply began; property team follow-up is due."))
+        for issue in unit.get("issues", []):
+            if issue.get("urgent") and not issue.get("reply"):
+                pending.append(review_item(unit_id, "issue", f"{issue.get('issue_id')}:{issue.get('reported_at')}",
+                                           "Respond to urgent resident report", issue.get("text", "Urgent report needs a response."),
+                                           severity="urgent"))
+    return [item for item in pending if latest.get(item["review_id"], {}).get("status") != "reviewed"]
+
+
+def connector_profile(partner: dict) -> dict:
+    """Normalize legacy offers to the shared connector contract and reject unknown fields."""
+    profile = dict(partner)
+    profile.setdefault("kind", "sell")
+    profile.setdefault("category", "electricity")
+    profile.setdefault("channel", "voice")
+    if profile["kind"] not in ("sell", "deliver"):
+        raise ValueError("Partner kind must be sell or deliver.")
+    if profile["channel"] not in ("api", "email", "voice"):
+        raise ValueError("Partner channel must be api, email, or voice.")
+    if not isinstance(profile.get("offers", []), list):
+        raise ValueError("Partner offers must be a list.")
+    if not profile.get("partner_id") or not profile.get("partner") or not profile.get("category"):
+        raise ValueError("Connector profile needs a partner_id, partner name, and category.")
+    offers = assign_offer_ids(profile.get("offers", []))
+    for offer in offers:
+        offer.setdefault("required_inputs", list(DEFAULT_REQUIRED_INPUTS))
+        if not isinstance(offer.get("required_inputs"), list):
+            raise ValueError(f"Offer {offer.get('offer_id')} required_inputs must be a list.")
+        if not offer["required_inputs"] or not all(isinstance(field, str) for field in offer["required_inputs"]):
+            raise ValueError(f"Offer {offer.get('offer_id')} needs one or more valid required_inputs.")
+        unknown = sorted(set(offer.get("required_inputs", [])) - CONNECTOR_FIELDS)
+        if unknown:
+            raise ValueError(f"Offer {offer.get('offer_id')} uses unknown connector fields: {', '.join(unknown)}")
+        if not offer.get("offer_id") or not offer.get("product"):
+            raise ValueError("Every partner offer needs an offer_id and product name.")
+        if profile["kind"] == "sell":
+            if not _positive_number(offer.get("estimated_monthly_price_eur")):
+                raise ValueError(f"Offer {offer.get('offer_id')} needs a positive monthly price.")
+            if int(offer.get("contract_months") or 0) < 1:
+                raise ValueError(f"Offer {offer.get('offer_id')} needs a contract term in months.")
+        else:
+            pricing = offer.get("pricing") or {}
+            if not any(_positive_number(pricing.get(key)) for key in ("callout_eur", "hourly_eur")):
+                raise ValueError(f"Service {offer.get('offer_id')} needs a positive callout or hourly price.")
+    profile["offers"] = offers
+    return profile
+
+
+def partner_order_view(order: dict, partner: dict, unit: dict) -> dict:
+    """Project Centrix's internal order onto the fields declared by the partner offer."""
+    offer = next((item for item in partner.get("offers", []) if item.get("offer_id") == order.get("offer_id")), {})
+    allowed = set(offer.get("required_inputs", DEFAULT_REQUIRED_INPUTS))
+    subject = order.get("subject", {})
+    projected = {"unit_id": subject.get("unit_id")}
+    if "unit.address" in allowed:
+        projected["address"] = subject.get("address")
+    if "tenant.name" in allowed:
+        projected["tenant"] = {"name": (subject.get("tenant") or {}).get("name"), "contact_via": "centrix"}
+    meter_fields = {"meter.type": "type", "meter.number": "number", "meter.switch_reading": "switch_reading"}
+    meter = {}
+    for catalogue_field, order_field in meter_fields.items():
+        if catalogue_field in allowed and order_field in (subject.get("meter") or {}):
+            meter[order_field] = subject["meter"][order_field]
+    if meter:
+        projected["meter"] = meter
+    energy = next((item for item in unit.get("contracts", []) if item.get("type") == "energy_supply"), {})
+    property_record = unit.get("property") or {}
+    unit_record = unit.get("unit") or {}
+    record_meter = selected_electricity_meter(unit, order.get("meter_id"))
+    address = str(property_record.get("address", ""))
+    postcode = re.search(r"\b\d{5}\b", address)
+    last_reading = record_meter.get("last_reading") if record_meter else None
+    catalogue_values = {
+        "unit.address": address or None, "unit.postcode": postcode.group(0) if postcode else None,
+        "unit.size_sqm": unit_record.get("size_sqm"), "unit.rooms": unit_record.get("rooms"),
+        "tenant.name": (unit.get("tenant") or {}).get("name"),
+        "tenant.age_over_18": (unit.get("tenant") or {}).get("age_over_18"),
+        "tenant.move_in": (unit.get("tenant") or {}).get("move_in"),
+        "tenant.move_out": (unit.get("tenant") or {}).get("move_out"),
+        "meter.type": record_meter.get("type") if record_meter else None,
+        "meter.number": record_meter.get("number") if record_meter else None,
+        "meter.last_reading": last_reading, "meter.switch_reading": (subject.get("meter") or {}).get("switch_reading"),
+        "usage.annual_kwh_estimate": energy.get("annual_consumption_kwh"),
+        "previous_contract.supplier": energy.get("supplier"), "previous_contract.ends": energy.get("expiry_date"),
+        "previous_contract.monthly_price_eur": energy.get("current_monthly_price_eur"),
+        "building.year": property_record.get("building_year"), "building.heating_type": property_record.get("heating"),
+        "access_windows": (unit.get("tenant") or {}).get("access_windows"),
+        "fault_summary": order.get("fault_summary"), "start_date": order.get("requested_start"),
+        # Direct-debit details are collected by the supplier and never stored in Centrix.
+        "iban_mandate": None,
+    }
+    partner_data = {field: catalogue_values.get(field) for field in allowed if field in catalogue_values}
+    view = {key: value for key, value in order.items()
+            if key in ("order_id", "partner_id", "partner", "offer_id", "kind", "status", "status_history", "consent",
+                       "start_date_mismatch")}
+    view["product"] = order.get("product")
+    view["estimated_monthly_price_eur"] = order.get("estimated_monthly_price_eur")
+    view["contract_months"] = order.get("contract_months")
+    view["subject"] = projected
+    view["partner_data"] = partner_data
+    view["requested_start"] = order.get("requested_start") if "start_date" in allowed else None
+    view["previous_contract"] = {key: value for key, value in (order.get("previous_contract") or {}).items()
+                                  if key in ("supplier", "ends")}
+    return view
 
 
 def add_event(kind: str, text: str, channel: str = "centrix", unit_id: str = "unit_4b") -> None:
@@ -411,7 +695,8 @@ def now_iso() -> str:
 
 def offer_version(offer: dict) -> str:
     fields = {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
-                                                "contract_months", "renewable_share_percent", "requires_meter_reading")}
+                                                "contract_months", "renewable_share_percent", "requires_meter_reading",
+                                                "required_inputs")}
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -462,11 +747,11 @@ def assign_offer_ids(offers: list, previous: list | None = None) -> list:
 
 
 def read_partner() -> dict:
-    """Normalize legacy catalogue rows once so every API uses persistent offer IDs."""
+    """Load a validated connector profile, retaining compatibility with legacy offers."""
     partner = json.loads(OFFERS_FILE.read_text(encoding="utf-8-sig"))
-    offers = assign_offer_ids(partner.get("offers", []))
-    if offers != partner.get("offers", []):
-        partner["offers"] = offers
+    normalized = connector_profile(partner)
+    if normalized != partner:
+        partner = normalized
         write_json(OFFERS_FILE, partner)
     return partner
 
@@ -660,8 +945,10 @@ class DemoHandler(BaseHTTPRequestHandler):
                     visible = []
                     for o in orders:
                         if o["order_id"] in ids:
-                            visible.append({**o, "previous_contract": {k: o["previous_contract"].get(k) for k in ("supplier", "ends")},
-                                            "consent": {k: o["consent"].get(k) for k in ("channel", "given_at")}})
+                            partner_view = partner_order_view(o, partner, unit)
+                            partner_view["consent"] = {k: o["consent"].get(k)
+                                                       for k in ("data_shared", "channel", "given_at")}
+                            visible.append(partner_view)
                     self.send_json(200, {"unit_id": unit_id, "unit": {"unit_id": unit_id}, "partner": {"partner": partner["partner"]},
                                          "orders": visible, "issues": [i for i in unit.get("issues", []) if i.get("shared_order_id") in ids],
                                          "calls": [c for c in read_list(CALLS_FILE, "calls") if c.get("unit_id") == unit_id
@@ -676,6 +963,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             view["today"] = max(demo_today().isoformat(), (orders[-1].get("handover_date") or "") if orders else "")
             view["offer_available"] = portal_offer_available(unit_id)
             view["partner"]["offers"] = [{**item, "offer_version": offer_version(item)} for item in partner.get("offers", [])]
+            if role == "reltix":
+                view["data_quality"] = unit_data_quality(unit)
             if role in ("tenant", "reltix"):
                 view["issues"] = read_json(unit_path(unit_id)).get("issues", [])
             if role in ("tenant", "reltix"):
@@ -720,6 +1009,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "kpis": kpis,
                                  "supplier_followups": [c for c in read_list(CALLS_FILE, "calls")
                                                         if c.get("kind") == "supplier_follow_up" and c.get("status") != "done"],
+                                 "review_queue": portfolio_review_queue(),
                                  "phone_ready": phone_ready(), "auto_dial_on": bool(os.environ.get("DEMO_PHONE_NUMBER")) and phone_ready()})
             return
         if path.startswith("/api/orders/"):
@@ -797,6 +1087,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.report_issue(body)
             elif path == "/api/issues/reply":
                 self.reply_to_issue(body)
+            elif re.fullmatch(r"/api/reviews/[^/]+", path):
+                self.review_task(unquote(path.rsplit("/", 1)[-1]), body)
             elif path == "/api/reset":
                 self.reset_demo()
             else:
@@ -833,6 +1125,11 @@ class DemoHandler(BaseHTTPRequestHandler):
                 raise ValueError(f"Enter the switch reading taken on {boundary}.")
         meter["meter_id"] = chosen_meter_id
         meter["switch_reading"] = {"value_kwh": value, "read_at": reading_date, "source": str(body.get("source", "portal"))[:20]}
+        meter["last_reading"] = {"value_kwh": value, "read_at": reading_date}
+        unit.setdefault("field_provenance", {})["meter.last_reading"] = {
+            "source": meter["switch_reading"]["source"], "recorded_at": now_iso(),
+            "value_hash": _value_hash(meter["last_reading"]),
+        }
         write_json(unit_path(unit_id), unit)
         add_event("reading", f"Meter reading {value:g} kWh saved ({meter['switch_reading']['source']}).", meter["switch_reading"]["source"], unit_id)
         # If the partner was waiting for this reading, centrix passes it on and resubmits (spec §6 needs_input → received).
@@ -876,6 +1173,10 @@ class DemoHandler(BaseHTTPRequestHandler):
             if not re.fullmatch(r"[A-Za-z0-9-]{5,32}", number):
                 raise ValueError("Enter a valid meter number from the meter label (5–32 letters or digits).")
             selected["number"] = number
+            unit.setdefault("field_provenance", {})["meter.number"] = {
+                "source": str(body.get("source", "tenant portal"))[:40], "recorded_at": now_iso(),
+                "value_hash": _value_hash(number),
+            }
             orders = read_orders()
             for order in orders:
                 if (order.get("subject", {}).get("unit_id") == unit_id
@@ -927,7 +1228,14 @@ class DemoHandler(BaseHTTPRequestHandler):
             })
         if not offers:
             raise ValueError("Enter at least one offer first.")
-        partner["offers"] = assign_offer_ids(offers, old_offers)
+        saved_offers = assign_offer_ids(offers, old_offers)
+        previous_by_id = {item.get("offer_id"): item for item in old_offers}
+        for offer in saved_offers:
+            previous = previous_by_id.get(offer.get("offer_id"), {})
+            for key in ("required_inputs", "eligibility", "availability", "attributes"):
+                if key in previous:
+                    offer[key] = previous[key]
+        partner["offers"] = saved_offers
         write_json(OFFERS_FILE, partner)
         self.send_json(200, {"ok": True, "partner": partner})
 
@@ -936,7 +1244,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(UNIT_FILE, read_json(UNIT_FILE.with_suffix(".seed.json")))
         for seed in PORTFOLIO_SEED.glob("unit_*.json"):
             write_json(PORTFOLIO_DIR / seed.name, read_json(seed))
-        for path in (CALLS_FILE, RUN_FILE, CLOCK_FILE):
+        for path in (CALLS_FILE, RUN_FILE, CLOCK_FILE, REVIEWS_FILE):
             path.unlink(missing_ok=True)
         if RESET_DATE:
             write_json(CLOCK_FILE, {"today": RESET_DATE.isoformat()})
@@ -945,6 +1253,38 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(EVENTS_FILE, {"events": []})
         run_trigger("reset")
         self.send_json(200, {"ok": True})
+
+    def review_task(self, review_id: str, body: dict) -> None:
+        """Record an auditable human acknowledgement for the current version of an exception."""
+        unit_id = str(body.get("unit_id", ""))
+        if not unit_id:
+            raise ValueError("A unit_id is required to record this review.")
+        task = next((item for item in portfolio_review_queue() if item["review_id"] == review_id
+                     and item["unit_id"] == unit_id), None)
+        if task is None:
+            self.send_json(409, {"error": "This review item changed or has already been reviewed. Refresh the queue."})
+            return
+        note = str(body.get("note", ""))[:300].strip()
+        if len(note) < 5:
+            raise ValueError("Add a short note about what you checked or did.")
+        reviewed_at = now_iso()
+        if task["category"] == "provenance":
+            provenance = unit_path(unit_id)
+            unit = read_json(provenance)
+            fields = unit.setdefault("field_provenance", {})
+            current_values = {item["field"]: item.get("provenance_value", item.get("value"))
+                              for item in unit_data_quality(unit)}
+            for field in task.get("fields", []):
+                fields[field] = {"source": f"Property team review: {note}"[:100], "verified_at": reviewed_at,
+                                 "recorded_at": reviewed_at, "value_hash": _value_hash(current_values.get(field))}
+            write_json(provenance, unit)
+        reviews = read_list(REVIEWS_FILE, "reviews")
+        record = {"review_id": review_id, "unit_id": unit_id, "status": "reviewed", "note": note,
+                  "reviewed_by": "Property team", "reviewed_at": reviewed_at, "category": task["category"]}
+        reviews.append(record)
+        write_json(REVIEWS_FILE, {"reviews": reviews[-1000:]})
+        add_event("staff_review", f"{task['title']}: {note}", "property team", unit_id)
+        self.send_json(200, {"review": record})
 
     def update_case(self, body: dict) -> None:
         """What the resident told Mia or the portal, stored once on the unit so every page shows it."""
@@ -968,7 +1308,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             case["chosen_offer_version"] = current_version
             case["chosen_offer_snapshot"] = {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
                                                                                "contract_months", "renewable_share_percent",
-                                                                               "requires_meter_reading")}
+                                                                               "requires_meter_reading", "required_inputs")}
             changes.append(f"reviewed {offer.get('product')} at €{float(offer.get('estimated_monthly_price_eur') or 0):.2f} for {offer.get('contract_months')} months")
         if "preferred_channel" in body:
             case["preferred_channel"] = "email" if str(body["preferred_channel"]).lower().startswith("e") else "sms"
@@ -1171,8 +1511,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         unit.setdefault("unit", {})["selected_electricity_meter_id"] = chosen_meter_id
         write_json(unit_path(unit_id), unit)
         channel = str(body.get("channel") or "portal")
-        data_shared = ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date", "offer.product",
-                       "offer.monthly_price", "offer.contract_months", "offer.renewable_share_percent"]
+        data_shared = list(offer.get("required_inputs", DEFAULT_REQUIRED_INPUTS))
         given_at = now_iso()
         callback_date = (demo_today() + timedelta(days=1)).isoformat()
 
@@ -1184,7 +1523,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             "offer_id": offer["offer_id"],
             "offer_version": current_version,
             "offer_snapshot": {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
-                                                                 "contract_months", "renewable_share_percent", "requires_meter_reading")},
+                                                                 "contract_months", "renewable_share_percent", "requires_meter_reading",
+                                                                 "required_inputs")},
             "submission_id": submission_id or None,
             "renewal_cycle": cycle,
             "contract_months": int(offer.get("contract_months") or 0),
@@ -1210,7 +1550,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             "consent": {"data_shared": data_shared, "approved_fields": data_shared, "recipient": partner.get("partner"),
                         "offer_id": offer["offer_id"],
                         "offer_version": current_version, "offer_snapshot": {key: offer.get(key) for key in ("offer_id", "product", "estimated_monthly_price_eur",
-                                                                                                                "contract_months", "renewable_share_percent")},
+                                                                                                                "contract_months", "renewable_share_percent",
+                                                                                                                "required_inputs")},
                         "given_at": given_at, "channel": channel,
                         "given_by": tenant.get("contact_id"), "signed_name": str(body.get("signed_name", ""))[:100],
                         "conversation": str(body.get("session_id", ""))[:40]},

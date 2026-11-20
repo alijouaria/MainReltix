@@ -117,10 +117,11 @@ centrix places an order once the person has confirmed (tenant one tap, plus land
 ```
 
 Rules:
-- An order carries **only** the fields in the offer's `required_inputs`. Any extra field is rejected (`422`). This is enforced in the reference code.
+- The `partner_data` projection contains only fields in the offer's `required_inputs`. The common order envelope is defined separately by the connector schema. The reference code rejects unknown catalogue fields when it loads a profile and filters each projection to the selected offer.
 - `tenant.contact_via: "centrix"`: partners do not get the tenant's email or phone. Any question to the tenant goes through centrix, which routes it to the tenant's preferred channel.
 - `previous_contract.cancellation_by: "new_supplier"`: in Germany the new supplier normally cancels the old contract and registers the meter switch with the grid operator. The order says who does what.
 - The order is idempotent on `order_id`. Resending the same order returns the existing order.
+- The partner adapter also receives `partner_data`, a projection of the catalogue values named in that offer's `required_inputs`. Missing inputs are explicit as `null`; no undeclared catalogue value is included in this projection. The standard order envelope still includes its defined identifiers, offer terms, start date, and previous-contract summary. Direct-debit details remain with the supplier.
 
 ## 6. Status updates
 
@@ -179,6 +180,12 @@ The fields offers may reference in `required_inputs` and eligibility rules. Sour
 | `building.year`, `building.heating_type` | 1972, central | property record |
 | `access_windows` | weekdays 08:00–12:00 | tenant preferences |
 
+### Data provenance and review
+
+Centrix tracks the source and recorded time for workflow-critical values, bound to the value that was checked. Existing records without that metadata are shown as **unverified**, rather than being treated as confirmed. Missing, invalid, stale, or unverified values create a property-team review item. Review notes are timestamped on the case timeline; a staff review records verification, and changing a value invalidates it. Meter readings and meter identifiers entered in the portal record their source and recorded time automatically.
+
+The staff dashboard shows the value, its source, and its recorded or verification time beside each check. Partner data is projected from the selected offer's `required_inputs`; a record-quality warning does not silently become a partner assertion.
+
 ## 9. Assumptions (stated for realism)
 
 - **How centrix knows the contract end date.** A tenant's energy contract is the tenant's own, so property managers do not normally see it. Assumption: at move-in the tenant opts in once (photo of their current bill, or consent in the lease annex). centrix extracts supplier, end date and annual usage. Without opt-in, centrix still offers a switch at move-in and move-out, when a contract change happens anyway.
@@ -219,8 +226,10 @@ No new endpoint and no schema change on the centrix side.
 | Spec block | Demo today | Note |
 |---|---|---|
 | centrix record (§8) | `data/centrix/unit_4b.json` | Field names in §8 point to this file |
-| Profile & offers (§2) | `data/partners/electricity_offers.json`; the energy-company view publishes offers | Demo offer fields are the spec's minimum offer (§2). The text box stands in for `GET /profile` |
+| Profile & offers (§2) | `data/partners/electricity_offers.json`; the energy-company view publishes offers | Legacy rows are normalized to a `sell` profile. `required_inputs` is checked against the field catalogue; changes to it invalidate the saved offer version |
+| Partner data projection (§5) | Energy-company view | The `partner_data` projection follows the selected offer's `required_inputs`; the shared order envelope follows the common schema |
 | Trigger | Tenant and landlord dashboards show days left until `expiry_date` | Same rule as above |
 | Switch reading (§5, `meter.switch_reading`) | Tenant enters the reading → `POST /api/reading` writes `unit.meters[].switch_reading` | Stand-in for a remote read or a one-photo capture |
 | Conversation | Tenant assistant answers from the centrix and partner records | Stand-in for the tenant channel; only these two records are sent to the model |
-| Order, status updates, consent (§5–6) | Not in the demo yet | Defined here for the next build step: `POST /orders`, `StatusUpdate` callback, consent record |
+| Order, status updates, consent (§5–6) | Resident confirmation creates an order; supplier workspace advances the lifecycle | Order submission is idempotent on the resident submission ID; status transitions are validated and consent is stored. Supplier updates are simulated in the local workspace; external authentication, webhook delivery, and partner onboarding are not implemented |
+| Data quality and human review | Staff record-quality panel and portfolio review queue | Missing, stale, invalid, and unverified critical fields and workflow exceptions are surfaced with provenance and an auditable review note |

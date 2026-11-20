@@ -144,6 +144,22 @@ function render() {
   ];
   byId("property-details").innerHTML = detailRows.map(([label, value]) => `<div class="detail-row"><span>${esc(label)}</span><strong>${esc(value || "—")}</strong></div>`).join("");
 
+  const quality = state.data_quality || [];
+  const qualityProblems = quality.filter((item) => item.status !== "verified").length;
+  byId("data-quality-count").textContent = qualityProblems ? `${qualityProblems} need review` : "All verified";
+  const qualityHtml = quality.map((item) => {
+    const badge = item.status === "verified" ? "badge-green" : item.status === "unverified" ? "badge-soft" : "badge-amber";
+    const status = item.status === "verified" ? "Verified" : item.status === "unverified" ? (item.recorded_at ? "Reported · unverified" : "Source unknown") : item.status === "outdated" ? "Outdated" : "Check needed";
+    const evidence = item.value == null ? "No value on file" : `${item.value}`;
+    const checked = item.verified_at ? `Verified ${new Date(item.verified_at).toLocaleDateString("en-GB")}` : item.recorded_at ? `Reported ${new Date(item.recorded_at).toLocaleDateString("en-GB")}` : "Verification date unavailable";
+    return `<div class="quality-item"><div class="quality-top"><strong>${esc(item.label)}</strong><span class="badge ${badge}">${status}</span></div>
+      <p>${esc(item.message)}</p><span class="muted small">${esc(evidence)} · ${esc(item.source || "Source unknown")} · ${esc(checked)}</span></div>`;
+  }).join("") || `<p class="muted small">No workflow-critical data checks are available.</p>`;
+  if (byId("data-quality").dataset.html !== qualityHtml) {
+    byId("data-quality").dataset.html = qualityHtml;
+    byId("data-quality").innerHTML = qualityHtml;
+  }
+
   const switchReading = meter.switch_reading || {};
   const hasReading = switchReading.value_kwh !== null && switchReading.value_kwh !== undefined && switchReading.value_kwh !== "";
   byId("reading-status").textContent = hasReading ? "Reading saved" : "Not entered";
