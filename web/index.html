@@ -3,22 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Reltix · Energy renewal demo</title>
+  <meta name="description" content="Choose your Reltix workspace for tenant services or IT operations.">
+  <title>Choose your workspace · Reltix</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-  <header class="topbar">
+<body class="role-picker-page">
+  <div class="role-picker-glow role-picker-glow-left" aria-hidden="true"></div>
+  <div class="role-picker-glow role-picker-glow-right" aria-hidden="true"></div>
+
+  <header class="topbar role-picker-topbar">
     <a class="brand" href="/" aria-label="Reltix home"><span class="brand-mark">r</span>reltix</a>
+    <span class="role-picker-product">Energy services</span>
   </header>
-  <main class="main-area">
-    <section class="view active landing">
-      <h1>Energy renewal demo</h1>
-      <p class="muted">Each side has its own page and only sees its own data. The resident is reached by an SMS or email link; reltix staff work in centrix, where the energy partner's orders also arrive through the connector.</p>
-      <div class="landing-links">
-        <a class="landing-link" href="/tenant"><strong>Resident</strong><span class="muted small">Lena's link from the SMS or email</span></a>
-        <a class="landing-link" href="/reltix"><strong>reltix staff</strong><span class="muted small">Property manager view and energy partner orders</span></a>
+
+  <main class="role-picker-main">
+    <section class="role-picker" aria-labelledby="role-picker-title">
+      <div class="role-picker-intro">
+        <span class="eyebrow">Welcome to Reltix</span>
+        <h1 id="role-picker-title">Choose your workspace</h1>
+        <p>Select the role that best describes you. We’ll tailor the tools and information you see.</p>
       </div>
+
+      <div class="role-options" aria-label="Available workspaces">
+        <a class="role-option role-option-tenant" href="/tenant">
+          <span class="role-option-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon"><path d="M3 11.5 12 4l9 7.5"></path><path d="M5.5 10v9.5h13V10"></path><path d="M9.5 19.5v-6h5v6"></path></svg>
+          </span>
+          <span class="role-option-copy">
+            <span class="role-option-kicker">My home</span>
+            <strong>Tenant</strong>
+            <span>Review your energy plan, compare offers, and submit meter readings.</span>
+          </span>
+          <span class="role-option-cta">Continue as tenant</span>
+          <span class="role-option-check" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon"><path d="m7 12 3 3 7-7"></path></svg>
+          </span>
+        </a>
+
+        <a class="role-option role-option-staff" href="/reltix">
+          <span class="role-option-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M8 5V3h8v2M8 19v2m8-2v2M3 10h18"></path></svg>
+          </span>
+          <span class="role-option-copy">
+            <span class="role-option-kicker">Operations</span>
+            <strong>IT staff</strong>
+            <span>Manage properties, monitor contracts, and handle partner orders.</span>
+          </span>
+          <span class="role-option-cta">Continue as IT staff</span>
+          <span class="role-option-check" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="icon"><path d="m7 12 3 3 7-7"></path></svg>
+          </span>
+        </a>
+      </div>
+
+      <p class="role-privacy-note">
+        <svg viewBox="0 0 24 24" class="icon" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.9 8.3 7 10 4.1-1.7 7-5.4 7-10V6l-7-3Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+        Your workspace only shows the information relevant to your role.
+      </p>
     </section>
   </main>
+
+  <footer class="role-picker-footer">Reltix Energy Services</footer>
 </body>
 </html>
