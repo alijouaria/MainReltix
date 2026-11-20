@@ -517,3 +517,14 @@ input:focus, textarea:focus {
     border-color: var(--line-strong);
   }
 }
+
+.brand { gap: 9px; }
+.brand-logo {
+  display: block;
+  width: 106px;
+  height: auto;
+  max-height: 36px;
+  object-fit: contain;
+  object-position: left center;
+}
+.sidebar .brand-logo { width: 104px; }
