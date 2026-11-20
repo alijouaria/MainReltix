@@ -321,6 +321,36 @@ def portal_offer_available(unit_id):
     return any(row["unit_id"] == unit_id and row["decision"] == "matched" for row in rows)
 
 
+def reassign_shared_issues_for_order(order: dict, reason: str) -> list[str]:
+    """Return open complaints shared with a declined/cancelled supplier to the property team."""
+    order_id = order.get("order_id")
+    unit_id = order.get("subject", {}).get("unit_id")
+    if not order_id or not unit_id:
+        return []
+    path = unit_path(unit_id)
+    unit = read_json(path)
+    changed = []
+    for issue in unit.get("issues", []):
+        if issue.get("shared_order_id") != order_id or issue.get("reply"):
+            continue
+        at = now_iso()
+        history = issue.setdefault("ownership_history", [])
+        history.append({"owner": "partner", "partner": order.get("partner"), "order_id": order_id,
+                        "ended_at": at, "reason": reason})
+        issue["shared_order_id"] = None
+        issue["owner"] = "property_team"
+        issue["ownership_returned_at"] = at
+        issue["ownership_reason"] = reason
+        issue["status"] = "reported"
+        history.append({"owner": "property_team", "at": at, "reason": reason})
+        changed.append(issue.get("issue_id"))
+        add_event("issue_returned", f"Supplier complaint {issue.get('issue_id')} returned to the property team: {reason}.",
+                  "centrix", unit_id)
+    if changed:
+        write_json(path, unit)
+    return changed
+
+
 class DemoHandler(BaseHTTPRequestHandler):
     def send_json(self, status: int, value: dict) -> None:
         payload = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -636,12 +666,20 @@ class DemoHandler(BaseHTTPRequestHandler):
         issues = unit.setdefault("issues", [])
         issue = next((i for i in issues if i["issue_id"] == body.get("issue_id")), None)
         source = str(body.get("source", "voice"))[:20]
+        session_id = str(body.get("call_session_id", ""))[:80]
+        event_id = str(body.get("client_event_id", ""))[:100]
+        event_key = f"{session_id}:{event_id}" if session_id and event_id else ""
+        if issue is None and session_id:
+            issue = next((i for i in issues if i.get("call_session_id") == session_id), None)
+        if issue is None and event_key:
+            issue = next((i for i in issues if event_key in i.get("client_event_ids", [])), None)
         if body.get("shared_order_id") and (not issue or not issue.get("shared_order_id")):
             order = next((o for o in read_orders() if o["order_id"] == body["shared_order_id"]
                           and o["subject"]["unit_id"] == unit_id and o.get("consent")
                           and o["status"] not in ("cancelled", "rejected")), None)
             if not order or (issue and issue.get("reply")):
                 raise ValueError("Share an open complaint with a supplier on an accepted order for this flat.")
+        duplicate_event = bool(issue and event_key and event_key in issue.get("client_event_ids", []))
         if issue is None:
             if body.get("issue_id"):
                 raise ValueError("This complaint is no longer on the unit.")
@@ -649,17 +687,29 @@ class DemoHandler(BaseHTTPRequestHandler):
             if not text:
                 raise ValueError("Describe the problem.")
             issue = {"issue_id": "iss_" + uuid.uuid4().hex[:6], "text": text, "urgent": bool(body.get("urgent")),
-                     "status": "reported", "source": source, "reported_at": now_iso()}
+                     "status": "reported", "source": source, "reported_at": now_iso(), "owner": "property_team",
+                     "ownership_history": [{"owner": "property_team", "at": now_iso(), "reason": "Complaint received"}]}
+            if session_id:
+                issue["call_session_id"] = session_id
+            if event_key:
+                issue["client_event_ids"] = [event_key]
             issues.append(issue)
             add_event("issue", f"Problem reported: {text}" + (" (urgent)" if issue["urgent"] else ""), source, unit_id)
-        else:
+        elif not duplicate_event:
             if body.get("text"):
                 issue["text"] = f"{issue['text']} {str(body['text']).strip()}"[:600]
             if body.get("urgent") and not issue["urgent"]:
                 issue["urgent"] = True
                 add_event("issue", f"Marked urgent: {str(body.get('reason') or issue['text'])[:200]}", source, unit_id)
+            if session_id and not issue.get("call_session_id"):
+                issue["call_session_id"] = session_id
+            if event_key:
+                issue.setdefault("client_event_ids", []).append(event_key)
         if body.get("shared_order_id") and not issue.get("shared_order_id"):
             issue["shared_order_id"] = body["shared_order_id"]
+            issue["owner"] = "partner"
+            issue.setdefault("ownership_history", []).append({"owner": "partner", "order_id": body["shared_order_id"],
+                "partner": order.get("partner"), "at": now_iso(), "reason": "Tenant chose to share this complaint"})
             add_event("issue_shared", "Tenant asked the agent to call the supplier about this complaint.", "portal", unit_id)
         write_json(path, unit)
         self.send_json(200, {"issue": issue})
@@ -670,7 +720,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         issue = next((i for i in unit.get("issues", []) if i["issue_id"] == body.get("issue_id")), None)
         if not issue:
             raise ValueError("Unknown complaint for this flat.")
-        assigned = "partner" if issue.get("shared_order_id") else "reltix"
+        assigned = "partner" if issue.get("owner") == "partner" or issue.get("shared_order_id") else "reltix"
         if body.get("role") != assigned:
             raise ValueError("This complaint is assigned to another workspace.")
         message = body.get("reply")

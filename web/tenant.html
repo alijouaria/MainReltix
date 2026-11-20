@@ -70,10 +70,12 @@
             <form id="problem-form" class="feed-form">
               <label>Mia asks what went wrong<textarea name="text" required maxlength="300" rows="3"></textarea></label>
               <div id="share-option" hidden><label class="consent"><input name="share" type="checkbox"><span>Share this complaint with my energy supplier and ask for a reply.</span></label></div>
+              <div class="answer-row"><button class="text-button" type="button" data-sim-disconnect="unsaved">Simulate disconnect before saving</button><button class="text-button" type="button" data-sim-disconnect="saved">Save note, then disconnect</button></div>
               <button class="button button-primary" type="submit">Finish demo call</button>
             </form>
           </details>
           <p class="form-message" id="issue-feedback" role="status"></p>
+          <div id="complaint-recovery"></div>
           <div id="issue-list"></div>
         </div>
       </section>
