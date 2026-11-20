@@ -22,7 +22,8 @@ class HandoverTests(unittest.TestCase):
         self.handler = object.__new__(main.DemoHandler)
         self.handler.send_json = self.capture
         self.handler.reset_demo()
-        self.offer_id = main.read_json(main.OFFERS_FILE)["offers"][0]["offer_id"]
+        self.offer = main.read_json(main.OFFERS_FILE)["offers"][0]
+        self.offer_id = self.offer["offer_id"]
 
     def capture(self, code, result):
         self.code, self.result = code, result
@@ -40,7 +41,10 @@ class HandoverTests(unittest.TestCase):
         return self.result
 
     def order(self, unit):
-        order = self.post("orders", unit_id=unit, offer_id=self.offer_id, consent_given=True)["order"]
+        self.post("case", unit_id=unit, chosen_offer_id=self.offer_id,
+                  offer_version=main.offer_version(self.offer), source="portal")
+        order = self.post("orders", unit_id=unit, offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
+                          submission_id="handover-" + unit, consent_given=True)["order"]
         self.assertEqual(self.code, 201)
         return "orders/" + order["order_id"] + "/status", order["order_id"]
 
@@ -58,12 +62,17 @@ class HandoverTests(unittest.TestCase):
         self.post(status, status="pending")
         self.assertIsNone(self.view("owner")["start"])
         self.post(status, status="received")
+        self.post(status, status="needs_input", note="Please send the switch reading before 2026-12-31.")
+        self.post("clock", today="2026-12-31")
+        self.assertEqual(main.read_orders()[0]["status"], "received")
         self.post(status, status="confirmed")
+        self.post("clock", today="2026-12-31")
         self.assertFalse(self.view("tenant")["issues"][-1].get("reply"))
         self.post("issues/reply", role="partner", issue_id=shared["issue_id"], reply="Confirmed for 1 January.")
         self.assertEqual(self.view("tenant")["issues"][-1]["reply"], "Confirmed for 1 January.")
         self.assertEqual(self.view("owner"), {"unit_id": "unit_4b", "address": main.read_json(main.UNIT_FILE)["property"]["address"],
-                                             "status": "confirmed", "start": "2027-01-01"})
+                                             "status": "confirmed", "start": "2027-01-01", "start_unconfirmed": False,
+                                             "start_date_mismatch": None, "supplier_known": True})
         reading = self.view("partner")["orders"][0]["subject"]["meter"]["switch_reading"]
         self.assertEqual((reading["read_at"], reading["value_kwh"]), ("2026-12-31", 18610))
         self.assertEqual(self.view("tenant")["today"], reading["read_at"])
