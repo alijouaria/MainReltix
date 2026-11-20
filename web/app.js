@@ -23,21 +23,30 @@ function daysUntil(value) {
   return Math.ceil((expiry - today) / 86_400_000);
 }
 
-function renderOffers(targetId) {
+let chosenOffer = null;
+
+function renderOffers(targetId, selectable = false) {
   const offers = state.partner?.offers || [];
   const target = byId(targetId);
   if (!offers.length) {
     target.innerHTML = '<div class="reading-summary">No partner offers have been added yet.</div>';
     return;
   }
-  target.innerHTML = offers.map((offer) => `
-    <div class="offer-row">
+  const best = offers.reduce((a, b) => Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a);
+  const tag = selectable ? "button" : "div";
+  target.innerHTML = offers.map((offer, index) => `
+    <${tag} class="offer-row${offer === best ? " recommended" : ""}"${selectable ? ` type="button" data-index="${index}" aria-pressed="${chosenOffer === index}"` : ""}>
       <div class="offer-main">
         <span class="offer-title">${esc(offer.product)}</span>
-        <span class="offer-meta"><span>${Number(offer.renewable_share_percent || 0)}% renewable</span><span>${Number(offer.contract_months || 0)} months</span></span>
+        <span class="offer-meta">${offer === best ? '<span class="offer-tag">Lowest price</span>' : ""}<span>${Number(offer.renewable_share_percent || 0)}% renewable</span><span>${Number(offer.contract_months || 0)} months</span></span>
       </div>
-      <div class="offer-price">${money(offer.estimated_monthly_price_eur)}<span>per month · estimate</span></div>
-    </div>`).join("");
+      <div class="offer-price">${money(offer.estimated_monthly_price_eur)}<span>${chosenOffer === index && selectable ? "your pick" : "per month · estimate"}</span></div>
+    </${tag}>`).join("");
+  if (selectable) target.querySelectorAll("button.offer-row").forEach((row) => row.addEventListener("click", () => {
+    chosenOffer = Number(row.dataset.index);
+    renderOffers(targetId, true);
+    renderJob();
+  }));
 }
 
 function render() {
@@ -62,7 +71,7 @@ function render() {
   byId("offer-count").textContent = `${offers.length} ${offers.length === 1 ? "offer" : "offers"}`;
   byId("landlord-offer-count").textContent = `${offers.length} ${offers.length === 1 ? "offer" : "offers"}`;
   byId("partner-name").textContent = state.partner.partner || "Energy company";
-  renderOffers("tenant-offers");
+  renderOffers("tenant-offers", true);
   renderOffers("landlord-offers");
 
   const expiryBadge = byId("expiry-badge");
@@ -118,6 +127,8 @@ function render() {
     byId("reading-date").value = switchReading.read_at || "";
   }
 
+  renderJob();
+  renderPlans();
   const offersText = offers.map((offer) => `${offer.product} | ${Number(offer.estimated_monthly_price_eur).toFixed(2)} | ${Number(offer.renewable_share_percent)} | ${Number(offer.contract_months)}`).join("\n");
   byId("offers-input").value = offersText;
   if (!document.querySelector("#chat-messages .message")) {
@@ -183,8 +194,8 @@ async function refreshState() {
 function setRole(role) {
   document.querySelectorAll(".role-button").forEach((button) => button.classList.toggle("active", button.dataset.role === role));
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${role}-view`));
-  byId("view-crumb").textContent = role === "tenant" ? "Tenant portal" : role === "landlord" ? "Property workspace" : "Energy company";
-  document.querySelector(".topbar-right .avatar").textContent = role === "tenant" ? "LH" : role === "landlord" ? "MB" : "EC";
+  byId("view-crumb").textContent = role === "tenant" ? "SMS + email link" : role === "landlord" ? "Weekly digest" : "Orders";
+  document.querySelector(".topbar-right .avatar").textContent = role === "tenant" ? "LH" : role === "landlord" ? "PM" : "EP";
 }
 
 document.querySelectorAll(".role-button").forEach((button) => button.addEventListener("click", () => setRole(button.dataset.role)));
@@ -274,7 +285,7 @@ byId("offers-form").addEventListener("submit", async (event) => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the offers.");
-    message.textContent = "Offers saved. Tenant and landlord views are updated.";
+    message.textContent = "Saved. Customers now see these plans.";
     await refreshState();
     setRole("company");
   } catch (error) {
@@ -282,6 +293,122 @@ byId("offers-form").addEventListener("submit", async (event) => {
     message.classList.add("error");
   }
 });
+
+
+/* ---------- Partner inbox (practice mode, browser only) ---------- */
+const job = { status: "submitted", timeline: [] };
+const STEPS = [["submitted", "New"], ["received", "Accepted"], ["confirmed", "Contract ready"], ["active", "Power on"]];
+const STEP_OF = { submitted: 0, received: 1, needs_input: 1, confirmed: 2, active: 3, rejected: 0, cancelled: 2 };
+const ACTIONS = {
+  submitted: [["received", "Accept order"], ["rejected", "I can’t take this"]],
+  received: [["confirmed", "Contract is ready"], ["needs_input", "I need more info"]],
+  needs_input: [["received", "Got the info"]],
+  confirmed: [["active", "Power has started"]],
+};
+const HINTS = {
+  submitted: "Accepting means you’ll prepare the contract. You don’t need to call the customer.",
+  received: "When the contract is ready, tap the button. We tell the customer for you.",
+  needs_input: "We asked the customer for the meter reading. Tap when it arrives.",
+  confirmed: "Tap on the start day once the power runs on your plan.",
+  active: "All done. The contract is saved on the home’s record.",
+  rejected: "Order declined. The customer will be shown other plans.",
+};
+// What the voice assistant says at each step. Replace with the ElevenLabs agent later.
+const CALL_LINES = {
+  submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.customer} at ${o.address} would like your ${o.plan} plan at ${o.price} a month, starting ${prettyDate(o.start)}.`, `Can you take this order? Just say yes or no.`],
+  received: () => [`Thanks. Is the contract ready to send? Say yes, or say “I need more info”.`],
+  needs_input: () => [`I’ve asked the customer for the meter reading. I’ll call back when I have it.`],
+  confirmed: (o) => [`Great, I’ll tell the customer it starts on ${prettyDate(o.start)}.`, `I’ll call once more on the start day to check the power is running.`],
+  active: () => [`All done. Thank you!`],
+  rejected: () => [`Understood. I’ll offer the customer another plan. Thank you.`],
+};
+const CALL_REPLIES = {
+  submitted: "“Yes” or “No”", received: "“Yes” or “I need more info”", needs_input: "Nothing to say yet", confirmed: "“Yes, it’s running” on the start day",
+};
+
+const EVENTS = {
+  submitted: ["A customer chose your plan", null],
+  received: ["You accepted the order", null],
+  needs_input: ["You asked for more info", "We asked the customer for the meter reading."],
+  confirmed: ["You marked the contract ready", (o) => `Customer was told: “Your new plan starts on ${prettyDate(o.start)}. Nothing else to do.”`],
+  active: ["Power started on your plan", () => "Landlord was sent a short note."],
+  rejected: ["You declined the order", () => "Customer will be shown other plans."],
+};
+
+function jobOrder() {
+  const offers = state.partner?.offers || [];
+  if (!offers.length || !state.unit) return null;
+  const best = offers.reduce((a, b) => Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a);
+  const offer = offers[chosenOffer] || best;
+  const contract = energyContract();
+  const meter = electricityMeter();
+  const start = contract.expiry_date ? new Date(new Date(`${contract.expiry_date}T12:00:00`).getTime() + 86_400_000).toISOString().slice(0, 10) : null;
+  const r = meter.switch_reading;
+  return {
+    customer: state.unit.tenant?.name, address: state.unit.property?.address, plan: offer.product,
+    price: money(offer.estimated_monthly_price_eur), start, meter: meter.number,
+    reading: r?.value_kwh != null ? `${Number(r.value_kwh).toLocaleString("en-GB")} kWh` : "Customer sends it on the start day",
+    old: contract.supplier,
+  };
+}
+
+function renderJob() {
+  const o = jobOrder();
+  if (!o) { byId("order-details").innerHTML = '<p class="muted">No orders yet.</p>'; return; }
+  if (!job.timeline.length) job.timeline.push({ status: "submitted", at: new Date() });
+  const rows = [["Customer", o.customer], ["Address", o.address], ["Plan", `${o.plan} · ${o.price} / month`], ["Start date", prettyDate(o.start)],
+    ["Meter number", o.meter], ["Meter reading", o.reading], ["Old supplier", `${o.old} (you cancel it)`]];
+  byId("order-details").innerHTML = rows.map(([k, v]) => `<div class="detail-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("");
+  const current = STEP_OF[job.status];
+  byId("order-steps").innerHTML = STEPS.map(([, label], i) => `<li class="${i < current || job.status === "active" ? "done" : i === current ? "now" : ""}">${esc(label)}</li>`).join("");
+  const actions = ACTIONS[job.status] || [];
+  byId("report-actions").innerHTML = actions.map(([s, label], i) => `<button class="button${i === 0 ? " button-primary" : ""}" data-status="${s}" type="button">${esc(label)}</button>`).join("");
+  byId("order-hint").textContent = HINTS[job.status] || "";
+  byId("call-script").innerHTML = (CALL_LINES[job.status] || (() => []))(o)
+    .map((line) => `<div class="call-line"><b>Assistant</b> ${esc(line)}</div>`).join("")
+    + (CALL_REPLIES[job.status] ? `<div class="call-line you"><b>You say</b> ${esc(CALL_REPLIES[job.status])}</div>` : "");
+  byId("company-title").textContent = job.status === "active" ? "Order complete" : job.status === "rejected" ? "Order declined" : "New order";
+  byId("job-timeline").innerHTML = job.timeline.slice().reverse().map((e) => {
+    const [title, note] = EVENTS[e.status];
+    return `<li><strong>${esc(title)}</strong><span class="muted">${e.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}${note ? ` · ${esc(note(o))}` : ""}</span></li>`;
+  }).join("");
+}
+
+byId("report-actions").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-status]");
+  if (!button) return;
+  job.status = button.dataset.status;
+  job.timeline.push({ status: job.status, at: new Date() });
+  renderJob();
+});
+byId("job-reset").addEventListener("click", () => { Object.assign(job, { status: "submitted", timeline: [] }); renderJob(); });
+
+/* ---------- Plans editor: simple rows, saved through the existing offers form ---------- */
+function planRow(offer = {}) {
+  const v = (x) => x === undefined || x === null ? "" : esc(x);
+  return `<div class="plan-row">
+    <label><span>Plan name</span><input data-k="name" value="${v(offer.product)}" required></label>
+    <label><span>€ / month</span><input data-k="price" type="number" step="0.01" min="0" value="${v(offer.estimated_monthly_price_eur)}" required></label>
+    <label><span>% green</span><input data-k="green" type="number" min="0" max="100" value="${v(offer.renewable_share_percent)}" required></label>
+    <label><span>Months</span><input data-k="months" type="number" min="1" value="${v(offer.contract_months)}" required></label>
+    <button class="remove-plan" type="button" aria-label="Remove plan">×</button>
+  </div>`;
+}
+function renderPlans() {
+  const box = byId("plan-rows");
+  if (box.contains(document.activeElement)) return;
+  box.innerHTML = (state.partner?.offers || []).map(planRow).join("") || planRow();
+}
+byId("add-plan").addEventListener("click", () => byId("plan-rows").insertAdjacentHTML("beforeend", planRow()));
+byId("plan-rows").addEventListener("click", (event) => {
+  if (event.target.classList.contains("remove-plan")) event.target.closest(".plan-row").remove();
+});
+byId("offers-form").addEventListener("submit", () => {
+  byId("offers-input").value = [...document.querySelectorAll(".plan-row")].map((row) => {
+    const get = (k) => row.querySelector(`[data-k="${k}"]`).value.trim();
+    return `${get("name")} | ${get("price")} | ${get("green")} | ${get("months")}`;
+  }).join("\n");
+}, true);
 
 refreshState().catch((error) => {
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
