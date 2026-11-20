@@ -31,26 +31,29 @@ A partner registers one **profile** and publishes one or more **offers**: a cata
 
 ```json
 {
-  "partner_id": "p_stromwerk",
-  "name": "Stromwerk Energie GmbH",
+  "partner_id": "partner_example_energy",
+  "name": "Example Green Energy GmbH",
   "kind": "sell",
-  "category": "energy",
+  "category": "electricity",
   "channel": "api",
-  "webhook_url": "https://api.stromwerk.example/centrix",
-  "contact": {"ops_email": "partner-ops@stromwerk.example"},
+  "webhook_url": "https://api.example-green.example/centrix",
+  "contact": {"ops_email": "partner-ops@example-green.example"},
   "offers": [
     {
-      "offer_id": "o_green12",
-      "title": "Green Power 12",
-      "pricing": {"base_eur_month": 12.00, "unit_price_ct_kwh": 31.9, "bonus_eur": 50},
-      "term": {"min_months": 12, "notice_weeks": 4, "price_guarantee_months": 12},
-      "attributes": {"green": true},
-      "required_inputs": ["tenant.name", "unit.address", "meter.number", "meter.reading", "start_date", "iban_mandate"],
+      "offer_id": "offer_green_12m",
+      "product": "Green Home 12",
+      "pricing": {"estimated_monthly_price_eur": 78.4, "base_eur_month": 12.00, "unit_price_ct_kwh": 31.9},
+      "term": {"contract_months": 12, "notice_weeks": 4, "price_guarantee_months": 12},
+      "attributes": {"renewable_share_percent": 100},
+      "availability": {"available_from": "2027-01-01"},
+      "required_inputs": ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date", "iban_mandate"],
       "valid_until": "2027-01-31"
     }
   ]
 }
 ```
+
+The **minimum** an offer needs is `offer_id`, `product`, `pricing.estimated_monthly_price_eur`, `term.contract_months` and `required_inputs`. `estimated_monthly_price_eur` is computed by the partner from the unit's `annual_consumption_kwh`, so tenants compare like with like against `current_monthly_price_eur`. A meter-reading requirement is expressed as `meter.switch_reading` in `required_inputs`.
 
 - `required_inputs` is the contract for data minimisation. centrix sends exactly these fields and nothing more.
 - `iban_mandate` is never typed into centrix. The supplier collects the direct-debit mandate in its own one-tap confirm step and returns a reference (see §5, `needs_input`).
@@ -63,7 +66,7 @@ Partners publish rules as data, so centrix can pre-check them without a call. Ru
 ```json
 "eligibility": [
   {"field": "unit.postcode", "op": "prefix_in", "value": ["52", "50", "53"]},
-  {"field": "meter.type", "op": "in", "value": ["electricity_standard", "electricity_smart"]},
+  {"field": "meter.type", "op": "eq", "value": "electricity"},
   {"field": "usage.annual_kwh_estimate", "op": "between", "value": [500, 10000]},
   {"field": "tenant.age_over_18", "op": "eq", "value": true}
 ]
@@ -91,20 +94,20 @@ centrix places an order once the person has confirmed (tenant one tap, plus land
 ```json
 {
   "order_id": "ord_9f2c",
-  "partner_id": "p_stromwerk",
-  "offer_id": "o_green12",
+  "partner_id": "partner_example_energy",
+  "offer_id": "offer_green_12m",
   "kind": "sell",
   "requested_start": "2027-01-01",
   "subject": {
     "unit_id": "unit_4b",
     "address": "Musterstraße 12, 52062 Aachen",
     "tenant": {"name": "Lena Hoffmann", "contact_via": "centrix"},
-    "meter": {"type": "electricity_standard", "number": "1ESY1160123456",
-              "reading": {"value_kwh": 18342, "read_at": "2026-12-31", "source": "remote_read"}}
+    "meter": {"type": "electricity", "number": "1ESY1160123456",
+              "switch_reading": {"value_kwh": 18610, "read_at": "2026-12-31", "source": "tenant_photo"}}
   },
-  "previous_contract": {"supplier": "Altversorger AG", "ends": "2026-12-31", "cancellation_by": "new_supplier"},
+  "previous_contract": {"contract_id": "energy_c_88", "supplier": "Demo Stadtenergie", "ends": "2026-12-31", "cancellation_by": "new_supplier"},
   "consent": {
-    "data_shared": ["tenant.name", "unit.address", "meter.number", "meter.reading", "start_date"],
+    "data_shared": ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date"],
     "given_at": "2026-11-20T09:21:00Z",
     "channel": "portal",
     "given_by": "c_202"
@@ -167,10 +170,12 @@ The fields offers may reference in `required_inputs` and eligibility rules. Sour
 | `unit.size_sqm`, `unit.rooms` | 68, 3 | property record |
 | `tenant.name` | Lena Hoffmann | lease |
 | `tenant.move_in`, `tenant.move_out` | 2026-12-01 | lease |
-| `meter.type`, `meter.number` | electricity_standard, 1ESY1160123456 | meter register |
-| `meter.reading` | 18342 kWh @ 2026-12-31 | remote read, or a tenant photo at the switch date |
-| `usage.annual_kwh_estimate` | 2100 | previous contract / meter history |
-| `previous_contract.supplier`, `.ends` | Altversorger AG, 2026-12-31 | shared by the tenant once (see §9) |
+| `meter.type`, `meter.number` | electricity, 1ESY1160123456 | `unit.meters[]` |
+| `meter.last_reading` | 18420 kWh @ 2026-10-31 | `unit.meters[].last_reading` |
+| `meter.switch_reading` | kWh @ switch date | `unit.meters[].switch_reading`: remote read, or one tenant photo/entry on the switch date |
+| `usage.annual_kwh_estimate` | 2400 | `contracts[type=energy_supply].annual_consumption_kwh` |
+| `previous_contract.supplier`, `.ends` | Demo Stadtenergie, 2026-12-31 | `contracts[type=energy_supply].supplier` / `.expiry_date`, shared by the tenant once (see §9) |
+| `previous_contract.monthly_price_eur` | 82.50 | `contracts[type=energy_supply].current_monthly_price_eur` |
 | `building.year`, `building.heating_type` | 1972, central | property record |
 | `access_windows` | weekdays 08:00–12:00 | tenant preferences |
 
@@ -203,3 +208,19 @@ To add any new partner:
 6. Pass the contract test suite: valid order accepted, extra field rejected, illegal transition 409, outcome written back to the unit.
 
 No new endpoint and no schema change on the centrix side.
+
+## 11. Trigger and demo mapping
+
+**Trigger rule.** centrix opens an energy case for a unit when an `energy_supply` contract has
+`today >= expiry_date - renewal_notice_days` and `status = active`. In the sample record that is 30 days before 2026-12-31. The expiry is computed at runtime, never stored.
+
+**What the demo (`main.py`, `web/`) shows, and how it maps to this spec:**
+
+| Spec block | Demo today | Note |
+|---|---|---|
+| centrix record (§8) | `data/centrix/unit_4b.json` | Field names in §8 point to this file |
+| Profile & offers (§2) | `data/partners/electricity_offers.json`; the energy-company view publishes offers | Demo offer fields are the spec's minimum offer (§2). The text box stands in for `GET /profile` |
+| Trigger | Tenant and landlord dashboards show days left until `expiry_date` | Same rule as above |
+| Switch reading (§5, `meter.switch_reading`) | Tenant enters the reading → `POST /api/reading` writes `unit.meters[].switch_reading` | Stand-in for a remote read or a one-photo capture |
+| Conversation | Tenant assistant answers from the centrix and partner records | Stand-in for the tenant channel; only these two records are sent to the model |
+| Order, status updates, consent (§5–6) | Not in the demo yet | Defined here for the next build step: `POST /orders`, `StatusUpdate` callback, consent record |

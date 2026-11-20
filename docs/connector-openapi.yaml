@@ -105,14 +105,15 @@ components:
     Offer:
       type: object
       additionalProperties: false
-      required: [offer_id, title, pricing, required_inputs]
+      required: [offer_id, product, pricing, term, required_inputs]
       properties:
         offer_id: {type: string}
-        title: {type: string}
+        product: {type: string}
         pricing:
           type: object
           description: Tariff for sell partners, price basis for deliver partners
           properties:
+            estimated_monthly_price_eur: {type: number, description: Partner estimate from annual_consumption_kwh}
             base_eur_month: {type: number}
             unit_price_ct_kwh: {type: number}
             bonus_eur: {type: number}
@@ -121,7 +122,7 @@ components:
         term:
           type: object
           properties:
-            min_months: {type: integer}
+            contract_months: {type: integer}
             notice_weeks: {type: integer}
             price_guarantee_months: {type: integer}
         attributes: {type: object, additionalProperties: true}
@@ -148,10 +149,12 @@ components:
         - tenant.age_over_18
         - meter.type
         - meter.number
-        - meter.reading
+        - meter.last_reading
+        - meter.switch_reading
         - usage.annual_kwh_estimate
         - previous_contract.supplier
         - previous_contract.ends
+        - previous_contract.monthly_price_eur
         - building.year
         - building.heating_type
         - access_windows
@@ -173,10 +176,11 @@ components:
       oneOf:
         - type: object
           title: LeadTime (sell)
-          required: [lead_time_days]
+          anyOf: [{required: [lead_time_days]}, {required: [available_from]}]
           properties:
             lead_time_days: {type: integer}
             start_on: {type: string, enum: [any_day, first_of_month]}
+            available_from: {type: string, format: date}
         - type: object
           title: Slots (deliver)
           required: [slots]
@@ -225,7 +229,7 @@ components:
           properties:
             type: {type: string}
             number: {type: string}
-            reading:
+            switch_reading:
               type: object
               properties:
                 value_kwh: {type: number}
@@ -262,6 +266,7 @@ components:
         previous_contract:
           type: object
           properties:
+            contract_id: {type: string}
             supplier: {type: string}
             ends: {type: string, format: date}
             cancellation_by: {type: string, enum: [new_supplier, tenant, centrix]}
