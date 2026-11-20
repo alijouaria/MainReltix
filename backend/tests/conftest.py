@@ -17,3 +17,9 @@ def _reset_clock():
     clock.reset()
     yield
     clock.reset()
+
+
+@pytest.fixture(autouse=True)
+def _offline_llm(monkeypatch):
+    """Keep tests deterministic and fast: agent uses canned fallbacks."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
