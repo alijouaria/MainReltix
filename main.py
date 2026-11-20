@@ -130,6 +130,14 @@ def add_event(kind: str, text: str, channel: str = "centrix", unit_id: str = "un
     write_json(EVENTS_FILE, {"events": events[-500:]})
 
 
+def latest_active_unit() -> str:
+    """The flat where a resident or Mia did something most recently (for the staff page's live view)."""
+    for event in reversed(read_events()):
+        if event.get("channel") != "centrix" and event.get("unit_id") and unit_path(event["unit_id"]).exists():
+            return event["unit_id"]
+    return "unit_4b"
+
+
 def offers_summary(partner: dict, current_price: float) -> str:
     """Spoken-friendly offer list, so Mia can present offers even where her tools can't run (a phone line)."""
     parts = []
@@ -156,6 +164,11 @@ def agent_variables(unit: dict) -> dict:
         "days_left": str((expiry - demo_today()).days) if expiry else "", "partner_name": partner.get("partner", ""),
         "meter_last4": str((unit.get("unit", {}).get("meters") or [{}])[0].get("number") or "")[-4:],
         "offers_summary": offers_summary(partner, price),
+        "call_reason": "renewal",
+        "first_message": (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
+                          f"I'm calling because your electricity contract with {energy.get('supplier', 'your supplier')} ends on "
+                          f"{expiry.day} {expiry.strftime('%B')}. Do you have two minutes?") if expiry else
+                         f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix. Do you have two minutes?",
     }
 
 
@@ -333,14 +346,18 @@ class DemoHandler(BaseHTTPRequestHandler):
         if path == "/api/state":
             query = parse_qs(parsed.query)
             role = query.get("role", [""])[0]
-            unit_id = query.get("unit", ["unit_4b"])[0]
+            following = role == "reltix" and "unit" not in query
+            unit_id = query.get("unit", [latest_active_unit() if following else "unit_4b"])[0]
             try:
                 view = view_for(role, read_json(unit_path(unit_id)), read_json(OFFERS_FILE))
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
                 return
             view["unit_id"] = unit_id
+            view["following"] = following
             view["today"] = demo_today().isoformat()
+            if role in ("tenant", "reltix"):
+                view["issues"] = read_json(unit_path(unit_id)).get("issues", [])
             if role in ("tenant", "reltix"):
                 view["case"] = read_json(unit_path(unit_id)).get("renewal_case", {})
             if role == "tenant" and (read_json(unit_path(unit_id)).get("tenant")):
@@ -422,6 +439,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.phone_call(path.split("/")[3], body)
             elif re.fullmatch(r"/api/calls/call_[a-z0-9]+", path):
                 self.update_call(path.split("/")[3], body)
+            elif path == "/api/issues":
+                self.report_issue(body)
             elif path == "/api/reset":
                 self.reset_demo()
             else:
@@ -546,6 +565,31 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(path, unit)
         add_event("case", f"Resident {'; '.join(changes)}.", source, unit_id)
         self.send_json(200, {"case": case})
+
+    def report_issue(self, body: dict) -> None:
+        """A resident reports a problem at home (via Mia or the portal). New issue, or update one by issue_id."""
+        unit_id = str(body.get("unit_id", "unit_4b"))
+        path = unit_path(unit_id)
+        unit = read_json(path)
+        issues = unit.setdefault("issues", [])
+        issue = next((i for i in issues if i["issue_id"] == body.get("issue_id")), None)
+        source = str(body.get("source", "voice"))[:20]
+        if issue is None:
+            text = str(body.get("text", "")).strip()[:300]
+            if not text:
+                raise ValueError("Describe the problem.")
+            issue = {"issue_id": "iss_" + uuid.uuid4().hex[:6], "text": text, "urgent": bool(body.get("urgent")),
+                     "status": "reported", "source": source, "reported_at": now_iso()}
+            issues.append(issue)
+            add_event("issue", f"Problem reported: {text}" + (" (urgent)" if issue["urgent"] else ""), source, unit_id)
+        else:
+            if body.get("text"):
+                issue["text"] = f"{issue['text']} {str(body['text']).strip()}"[:600]
+            if body.get("urgent") and not issue["urgent"]:
+                issue["urgent"] = True
+                add_event("issue", f"Marked urgent: {str(body.get('reason') or issue['text'])[:200]}", source, unit_id)
+        write_json(path, unit)
+        self.send_json(200, {"issue": issue})
 
     def update_call(self, call_id: str, body: dict) -> None:
         """The resident's phone/browser reports what happened to an outbound call."""

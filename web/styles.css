@@ -527,3 +527,11 @@ body.in-call { overflow: hidden; }
   .call-agent-button { width: 100%; }
   .call-agent-note { text-align: left; }
 }
+
+/* ---------- flow.js: reported problems ---------- */
+#issue-list { margin-top: 14px; }
+.issue-head { margin: 0 0 6px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.issue-item { padding: 10px 12px; margin-bottom: 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-size: 0.9rem; }
+.issue-item span { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 2px; }
+.issue-item.urgent { border-color: #ef4444; }
+.issue-item.urgent span { color: #ef4444; font-weight: 600; }

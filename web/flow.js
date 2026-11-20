@@ -110,16 +110,28 @@ const clientTools = {
     catch (error) { return `Couldn't save it: ${error.message}`; }
     return `Saved meter reading ${value} kWh.`;
   },
-  save_note: ({ note }) => {
+  save_note: async ({ note }) => {
     if (!note) return "Nothing to save.";
+    if (call.reason === "problem") return reportIssue({ text: String(note) });
     saveCase({ note: String(note) });
     return "Noted in the resident's file.";
   },
-  handoff_to_human: ({ reason }) => {
+  handoff_to_human: async ({ reason }) => {
+    if (call.reason === "problem") return reportIssue({ urgent: true, reason: reason || "urgent", text: call.issueId ? "" : String(reason || "Urgent problem") });
     saveCase({ needs_person: reason || "resident asked for a person" });
     return "A property manager will follow up.";
   },
 };
+
+// Problem reports (resident calls Mia): one ticket per call, later details and "urgent" update the same ticket.
+async function reportIssue({ text = "", urgent = false, reason = "" }) {
+  try {
+    const { issue } = await post("/api/issues", { unit_id: UNIT, source: "voice", issue_id: call.issueId, text, urgent, reason });
+    call.issueId = issue.issue_id;
+    refreshState();
+    return issue.urgent ? "Sent to the property team as urgent. A person will contact them soon." : "Problem sent to the property team.";
+  } catch (error) { return `Couldn't save it: ${error.message}`; }
+}
 
 // Phones only allow sound after the user has tapped the page once, so we unlock audio on the first tap.
 let audioCtx = null;
@@ -178,20 +190,30 @@ function declineIncoming() {
   render();
 }
 
-async function startCall() {
+async function startCall(reason = "renewal") {
   if (!window.ElevenLabsClient) {
     call.error = "Voice library didn't load. Use “Simulate the call” instead.";
     return render();
   }
   const contract = currentContract();
   const meter = electricityMeter();
-  Object.assign(call, { status: "connecting", transcript: [], error: "", simulated: false, linkSent: null });
+  const isCallback = call.incoming?.kind === "callback";
+  Object.assign(call, { status: "connecting", transcript: [], error: "", simulated: false, linkSent: null, reason, issueId: null });
   render();
-  logEvent("call", `Mia (voice agent) called ${state.unit.tenant.name}: contract with ${contract.supplier} ends ${prettyDate(contract.expiry_date)}.`);
+  const vars = { ...state.agent_variables };
+  if (reason === "problem") {
+    Object.assign(vars, { call_reason: "problem_report", first_message: `Hi ${firstName()}, this is Mia from reltix. What's the problem at home? Tell me what happened and where.` });
+    logEvent("call", `${state.unit.tenant.name} called Mia to report a problem.`);
+  } else if (isCallback) {
+    Object.assign(vars, { call_reason: "callback", first_message: `Hi ${firstName()}, it's Mia from reltix again, calling you back as promised about your electricity contract. Is now a better time?` });
+    logEvent("call", `Mia called ${state.unit.tenant.name} back, as they asked.`);
+  } else {
+    logEvent("call", `Mia (voice agent) called ${state.unit.tenant.name}: contract with ${contract.supplier} ends ${prettyDate(contract.expiry_date)}.`);
+  }
   try {
     call.conversation = await ElevenLabsClient.Conversation.startSession({
       agentId: AGENT_ID,
-      dynamicVariables: state.agent_variables, // built by centrix (main.py agent_variables), same as for phone calls
+      dynamicVariables: vars, // built by centrix (main.py agent_variables), same as for phone calls
       clientTools,
       onConnect: () => {
         call.status = "connected";
@@ -309,7 +331,7 @@ function renderPhone() {
       <div class="phone-avatar">M</div>
       <h2>Mia · reltix</h2>
       <p class="phone-sub">${sub}</p>
-      <p class="phone-about">${ringingNow ? `About your electricity contract${who ? ` · ${esc(who)}` : ""}` : "Speak normally, like on a phone call"}</p>`);
+      <p class="phone-about">${ringingNow ? `About your electricity contract${who ? ` · ${esc(who)}` : ""}` : call.reason === "problem" ? "Reporting a problem · speak normally" : "Speak normally, like on a phone call"}</p>`);
   set(".phone-lines", `${live ? last : ""}${call.error ? `<p class="err">${esc(call.error)}</p>` : ""}`);
   set(".phone-bottom", `<div class="phone-buttons">${buttons}</div>
     ${ringingNow ? `<button class="phone-simulate" type="button" data-call="simulate">No mic? Simulate the call</button>` : ""}`);
@@ -326,6 +348,16 @@ const RESIDENT_STEPS = [
   ["confirmed", "Contract confirmed"],
   ["active", "New supply running"],
 ];
+
+// Resident page: the problems they reported, so they can see it reached the property team.
+function renderIssues() {
+  const box = document.getElementById("issue-list");
+  if (!box) return;
+  const items = (state.issues || []).slice(-3).reverse();
+  const html = items.length ? `<p class="issue-head">Sent to your property team</p>` + items.map((i) => `
+    <div class="issue-item${i.urgent ? " urgent" : ""}"><span>${i.urgent ? "Urgent · " : ""}${esc(new Date(i.reported_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span>${esc(i.text)}</div>`).join("") : "";
+  if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+}
 
 function renderDecision() {
   const box = document.getElementById("decision");
@@ -461,7 +493,7 @@ const EVENT_TITLES = {
   call: "Call", choice: "Plan chosen on the call", case: "Resident file updated", reading: "Meter reading", link: "Link sent", declined: "Resident declined",
   callback: "Callback requested", handoff: "Needs a person", consent: "Consent given and signed", order: "Order sent to partner",
   received: "Partner accepted", needs_input: "Partner needs input", confirmed: "Contract confirmed", rejected: "Partner declined",
-  active: "New supply running", filed: "Filed on the unit", cancelled: "Order cancelled",
+  active: "New supply running", filed: "Filed on the unit", cancelled: "Order cancelled", issue: "Problem reported",
 };
 
 function renderManager() {
@@ -471,7 +503,7 @@ function renderManager() {
   const remaining = daysUntil(contract.expiry_date);
   const detected = { type: "detected", at: null, channel: "centrix", text: `Contract with ${contract.supplier} ends ${prettyDate(contract.expiry_date)} (${remaining} days). Case opened ${contract.renewal_notice_days || 30} days before expiry.` };
   const all = events.some((e) => e.type === "detected") ? events : [detected, ...events];
-  byId("landlord-title").textContent = `Flat ${UNIT.replace("unit_", "").toUpperCase()}`;
+  byId("landlord-title").textContent = `Flat ${UNIT.replace("unit_", "").toUpperCase()}${state.unit.tenant?.name ? ` · ${state.unit.tenant.name}` : ""}${state.following ? " · live" : ""}`;
   byId("case-count").textContent = events.length ? `${events.length} ${events.length === 1 ? "step" : "steps"} · 0 by you` : "Waiting for the resident";
   byId("case-timeline").innerHTML = all.slice().reverse().map((e) => `
     <li><strong>${esc(e.type === "detected" ? "Expiry detected" : EVENT_TITLES[e.type] || e.type)}</strong><span class="muted">${e.at ? `${new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(e.channel)} · ` : ""}${esc(e.text)}</span></li>`).join("");
@@ -501,6 +533,7 @@ function renderManager() {
     c.declined && ["Declined", c.declined_reason || "yes"],
     c.needs_person && ["Needs a person", c.needs_person],
     ...(c.notes || []).slice(-5).map((n) => ["Note", `${n.text} (${n.source})`]),
+    ...(state.issues || []).slice(-5).map((i) => [i.urgent ? "⚠ Urgent problem" : "Problem reported", `${i.text} (${new Date(i.reported_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })})`]),
   ].filter(Boolean);
   told.innerHTML = facts.length ? `<div class="section-label"><span>What the resident told us</span><span class="count-label">updated ${esc(new Date(c.updated_at || Date.now()).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }))}</span></div>
     <div class="detail-list told">${facts.map(([k, v]) => `<div class="detail-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div>` : "";
@@ -599,6 +632,7 @@ function render() {
     if (avatar && name) avatar.textContent = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   }
   renderCall();
+  renderIssues();
   renderDecision();
   renderPartner();
   renderManager();
@@ -608,6 +642,7 @@ document.addEventListener("click", async (event) => {
   const t = event.target.closest("[data-call],[data-decide],[data-partner],[data-run],[data-phone],#demo-reset");
   if (!t) return;
   if (t.dataset.call === "start") startCall();
+  if (t.dataset.call === "problem" && idleish() && !call.incoming) { unlockAudio?.(); startCall("problem"); }
   if (t.dataset.call === "end") endCall();
   if (t.dataset.call === "answer") answerIncoming();
   if (t.dataset.call === "decline") declineIncoming();

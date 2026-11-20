@@ -3,7 +3,9 @@ const chatHistory = [];
 // Each role has its own page (tenant.html, landlord.html, partner.html) with only its own elements.
 // Elements that belong to another role's page resolve to a detached placeholder, so shared code is safe.
 const ROLE = document.body.dataset.role;
-const UNIT = new URLSearchParams(location.search).get("unit") || "unit_4b"; // which flat this page shows
+// Which flat this page shows. The staff page without ?unit= follows the flat with the latest activity.
+const PINNED_UNIT = new URLSearchParams(location.search).get("unit");
+let UNIT = PINNED_UNIT || "unit_4b";
 const ABSENT = document.createElement("div");
 const byId = (id) => document.getElementById(id) || ABSENT;
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -150,9 +152,11 @@ function addMessage(kind, text) {
 }
 
 async function refreshState() {
-  const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}&unit=${encodeURIComponent(UNIT)}`, { cache: "no-store" });
+  const follow = ROLE === "reltix" && !PINNED_UNIT;
+  const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}${follow ? "" : `&unit=${encodeURIComponent(UNIT)}`}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not load the local demo records.");
   Object.assign(state, await response.json());
+  if (follow && state.unit_id) UNIT = state.unit_id;
   render();
   window.flow?.render();
 }
