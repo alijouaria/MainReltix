@@ -24,8 +24,7 @@ The assistant is configured to use Ollama with `qwen2.5:0.5b`, a small 0.5-billi
 
 Submitting a meter reading updates `data/centrix/unit_4b.json`. Submitting offers updates `data/partners/electricity_offers.json`.
 
-<<<<<<< Updated upstream
-The model receives only the current property/unit and partner-offer records; the prompt tells it to answer from those records and say when something is missing. Chat history stays in the browser session and is not written to JSON. ChatGPT and ElevenLabs can replace or extend the local model later. All people, partner names, prices, and readings are sample data.
+The model receives only the current property/unit and partner-offer records; the prompt tells it to answer from those records and say when something is missing. Recent chat history stays in the browser session and is included with each model request, so follow-up questions retain their meaning. It is not written to JSON. ChatGPT and ElevenLabs can replace or extend the local model later. All people, partner names, prices, and readings are sample data.
 
 ## Full flow: voice call → one-tap decision → partner → write-back
 
@@ -75,6 +74,3 @@ The Twilio trial blocks the audio streaming ElevenLabs needs, so real phone-line
 2. Second terminal: `winget install Cloudflare.cloudflared`, then `cloudflared tunnel --url http://localhost:8765`. It prints an `https://….trycloudflare.com` address. HTTPS is needed so the phone may use its microphone.
 3. Phone: open `https://….trycloudflare.com/tenant?unit=unit_4b` and tap the page once (lets it play sound).
 4. Laptop: on `/reltix`, set the demo date to **1 Dec**. The phone rings (and vibrates on Android): Answer, talk to Mia, sign on the phone.
-=======
-The model receives only the current property/unit and partner-offer records; the prompt tells it to answer from those records and say when something is missing. Recent chat history stays in the browser session and is included with each model request, so follow-up questions retain their meaning. It is not written to JSON. ChatGPT and ElevenLabs can replace or extend the local model later. All people, partner names, prices, and readings are sample data.
->>>>>>> Stashed changes

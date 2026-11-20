@@ -149,49 +149,6 @@ function addMessage(kind, text) {
   byId("chat-messages").scrollTop = byId("chat-messages").scrollHeight;
 }
 
-<<<<<<< Updated upstream
-function localAgentReply(message) {
-  const text = message.toLowerCase();
-  const tenant = state.unit.tenant || {};
-  const contract = energyContract();
-  const remaining = daysUntil(contract.expiry_date);
-  const offers = state.partner.offers || [];
-  if (/contract|agreement/.test(text)) {
-    return `Your ${contract.category || "energy"} contract with ${contract.supplier || "your current provider"}: ${contract.product || "product not listed"}. Status: ${contract.status || "not listed"}. Start: ${prettyDate(contract.start)}; expires: ${prettyDate(contract.expiry_date)}. Monthly price: ${money(contract.current_monthly_price_eur)}. Annual usage: ${Number(contract.annual_consumption_kwh || 0).toLocaleString("en-GB")} kWh.`;
-  }
-  if (/expir|end date|when.*contract|contract.*when/.test(text)) {
-    if (remaining === null) return "I can’t find an expiry date in the sample contract record.";
-    if (remaining < 0) return `The listed contract expiry date was ${prettyDate(contract.expiry_date)}, ${Math.abs(remaining)} days ago. I can’t check its live status in this demo.`;
-    return `Your ${contract.category || "energy"} contract with ${contract.supplier || "your current provider"} is listed to expire on ${prettyDate(contract.expiry_date)} (${remaining} days from today).`;
-  }
-  if (/offer|compare|renew|tariff|deal/.test(text)) {
-    if (!offers.length) return "There aren’t any partner offers in the demo right now. The company view can add some.";
-    const choices = offers.map((offer) => `${offer.product}: ${money(offer.estimated_monthly_price_eur)} per month, ${Number(offer.renewable_share_percent || 0)}% renewable, ${Number(offer.contract_months || 0)} months`).join("\n");
-    return `Here are the offers:\n${choices}\nThese are estimates. When you’re ready, pick one and confirm on this page. Nothing is ordered before that.`;
-  }
-  if (/meter|reading|kwh/.test(text)) {
-    const reading = electricityMeter().switch_reading || {};
-    if (reading.value_kwh !== null && reading.value_kwh !== undefined) return `A changeover reading of ${Number(reading.value_kwh).toLocaleString("en-GB")} kWh was recorded for ${prettyDate(reading.read_at)}.`;
-    return `There’s no changeover reading entered yet. You can add the meter value and date in the Changeover reading card. The last known reading is ${Number(electricityMeter().last_reading?.value_kwh || 0).toLocaleString("en-GB")} kWh from ${prettyDate(electricityMeter().last_reading?.read_at)}.`;
-  }
-  if (/price|cost|pay|supplier|provider|electricity/.test(text)) {
-    return `Your current electricity plan is ${contract.product || "not specified"} with ${contract.supplier || "a provider not listed"}, at ${money(contract.current_monthly_price_eur)} per month. The sample record lists ${Number(contract.annual_consumption_kwh || 0).toLocaleString("en-GB")} kWh annual usage.`;
-  }
-  if (/address|home|property|apartment|flat|room|heating|landlord|owner/.test(text)) {
-    const home = state.unit.unit || {};
-    const property = state.unit.property || {};
-    return `Your home is ${property.address || "an address not listed"}. It’s a ${home.size_sqm || "?"} m², ${home.rooms || "?"}-room unit on floor ${home.floor || "?"}; the building uses ${property.heating || "a heating type not listed"}. The owner record names ${state.unit.owner?.name || "an owner not listed"}.`;
-  }
-  if (/hello|hi|hey|good morning/.test(text)) return `Hi ${tenant.name?.split(" ")[0] || "there"}! I can answer from the sample records about your home, current supplier, expiry date, offers, or meter reading.`;
-  return "I’m the simple local demo assistant, so I answer from the property and offer records only. Try asking when your contract expires, what offers are available, or what meter reading is saved.";
-}
-
-function isDirectRecordQuestion(message) {
-  return /\b(contract|agreement|lease|rent|offer|tariff|plans|meter|reading|kwh|tenant|resident|owner|landlord|property|home|address|rooms|heating|unit|supplier|provider|price|cost)\b/i.test(message);
-}
-
-=======
->>>>>>> Stashed changes
 async function refreshState() {
   const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}&unit=${encodeURIComponent(UNIT)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not load the local demo records.");
