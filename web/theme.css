@@ -648,3 +648,6 @@ button.kpi:focus-visible { outline: 2px solid var(--accent); }
 .feed li.muted { display: block; cursor: default; }
 #landlord-view { scroll-margin-top: 16px; transition: box-shadow .4s; }
 #landlord-view.flash { box-shadow: 0 0 0 3px var(--accent), var(--shadow-2); }
+.qr-missing { display: grid; gap: 6px; padding: 18px 8px; text-align: center; color: var(--ink); }
+.qr-missing span { color: var(--muted); font-size: 0.85rem; }
+.phone-pop .mini-btn:disabled, .phone-pop select:disabled { opacity: .5; }

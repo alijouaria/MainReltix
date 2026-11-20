@@ -132,6 +132,17 @@ def main() -> int:
                 time.sleep(1)
             TUNNEL_FILE.write_text(json.dumps({"url": phone_url, "started": time.time()}), encoding="utf-8")
 
+            def heartbeat() -> None:
+                # The app only trusts a link that's refreshed every few seconds, so a link from an old run is never shown.
+                while tunnel.poll() is None:
+                    try:
+                        os.utime(TUNNEL_FILE, None)
+                    except OSError:
+                        pass
+                    time.sleep(5)
+
+            threading.Thread(target=heartbeat, daemon=True).start()
+
     tenant_link = f"{phone_url}/tenant?unit=unit_1a" if phone_url else None
     copied = copy_to_clipboard(tenant_link) if tenant_link else False
     banner([

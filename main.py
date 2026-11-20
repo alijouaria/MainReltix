@@ -9,6 +9,7 @@ import math
 import mimetypes
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -800,7 +801,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         if path == "/api/tunnel":
             # Written by launch.py when the cloudflared phone link is up.
             tunnel = ROOT / "data" / "tunnel.json"
-            self.send_json(200, {"url": read_json(tunnel).get("url") if tunnel.exists() else None})
+            fresh = tunnel.exists() and time.time() - tunnel.stat().st_mtime < 20   # launch.py refreshes it every 5 s
+            self.send_json(200, {"url": read_json(tunnel).get("url") if fresh else None})
             return
         if path == "/api/portfolio":
             run = read_json(RUN_FILE) if RUN_FILE.exists() else None

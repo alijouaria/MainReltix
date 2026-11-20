@@ -1007,18 +1007,24 @@ async function renderPhonePop() {
     const first = residents.find((r) => r.decision === "matched") || residents[0];
     select.innerHTML = residents.map((r) => `<option value="${r.unit_id}" ${r.unit_id === (PINNED_UNIT || first.unit_id) ? "selected" : ""}>${flatId(r.unit_id)} · ${esc(r.tenant)}${r.decision === "matched" ? " · Mia calling" : ""}</option>`).join("");
   }
-  const base = tunnelUrl || location.origin;
-  const link = `${base}/tenant?unit=${select.value || "unit_1a"}`;
-  byId("phone-url").value = link;
   const qr = byId("phone-qr");
+  const link = tunnelUrl ? `${tunnelUrl}/tenant?unit=${select.value || "unit_1a"}` : "";
+  byId("phone-url").value = link || "No phone link";
+  byId("phone-copy").disabled = !link;
+  select.disabled = !link;
+  if (!link) {
+    // A localhost link can't work on a phone (it would point at the phone itself), so show no QR at all.
+    qr.dataset.link = "";
+    qr.innerHTML = `<div class="qr-missing"><strong>No phone link running</strong><span>Close the app window and start it with <b>Start Reltix.bat</b>. It opens the phone link, then the QR code appears here.</span></div>`;
+    byId("phone-note").textContent = "";
+    return;
+  }
   if (qr.dataset.link !== link) {
     qr.dataset.link = link;
     if (window.qrcode) { const code = qrcode(0, "M"); code.addData(link); code.make(); qr.innerHTML = code.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); }
     else qr.textContent = "QR code unavailable";
   }
-  byId("phone-note").textContent = tunnelUrl
-    ? "Scan with the phone camera, then tap the page once so it can ring."
-    : "No phone link yet. Start the demo with “Start Reltix.bat” to get one. This QR only works on this laptop's network.";
+  byId("phone-note").textContent = "Scan with the phone camera, then tap the page once so it can ring.";
 }
 document.addEventListener("click", async (event) => {
   const btn = event.target.closest("#phone-btn");
