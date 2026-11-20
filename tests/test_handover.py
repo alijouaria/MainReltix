@@ -66,6 +66,7 @@ class HandoverTests(unittest.TestCase):
         self.post("clock", today="2026-12-31")
         self.assertEqual(main.read_orders()[0]["status"], "received")
         self.post(status, status="confirmed")
+        self.post("clock", today="2026-12-31")
         self.assertFalse(self.view("tenant")["issues"][-1].get("reply"))
         self.post("issues/reply", role="partner", issue_id=shared["issue_id"], reply="Confirmed for 1 January.")
         self.assertEqual(self.view("tenant")["issues"][-1]["reply"], "Confirmed for 1 January.")

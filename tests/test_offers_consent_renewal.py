@@ -145,7 +145,9 @@ class OfferConsentRenewalTests(unittest.TestCase):
         self.assertEqual(status, 201)
         first = result["order"]
         self.post(f"orders/{first['order_id']}/status", status="received")
+        self.post(f"orders/{first['order_id']}/status", status="needs_input", note="Please send the switch reading before 2026-12-31.")
         self.post("clock", today="2026-12-31")
+        self.assertEqual(main.read_orders()[0]["status"], "received")
         self.post(f"orders/{first['order_id']}/status", status="confirmed")
         self.post(f"orders/{first['order_id']}/status", status="active")
         self.assertEqual(self.code, 200, self.result)

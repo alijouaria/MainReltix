@@ -41,6 +41,9 @@ class MeterHandoverTests(unittest.TestCase):
         main.write_json(main.unit_path(unit_id), value)
 
     def order(self, unit_id="unit_4b", chosen_meter_id=None):
+        self.post("case", unit_id=unit_id, chosen_offer_id=self.offer_id,
+                  offer_version=main.offer_version(self.offer), source="portal")
+        self.assertEqual(self.code, 200)
         payload = {"unit_id": unit_id, "offer_id": self.offer_id, "offer_version": main.offer_version(self.offer),
                    "submission_id": "meter-" + unit_id, "consent_given": True}
         if chosen_meter_id:
@@ -95,6 +98,8 @@ class MeterHandoverTests(unittest.TestCase):
                   "switch_reading": {"value_kwh": None, "read_at": None}}
         unit["unit"]["meters"].append(second)
         self.save_unit("unit_4b", unit)
+        self.post("case", unit_id="unit_4b", chosen_offer_id=self.offer_id,
+                  offer_version=main.offer_version(self.offer), source="portal")
         self.post("orders", unit_id="unit_4b", offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
                   submission_id="missing-meter-order", consent_given=True)
         self.assertEqual(self.code, 400)
@@ -125,6 +130,8 @@ class MeterHandoverTests(unittest.TestCase):
         unit = self.unit("unit_3b")
         unit["unit"]["meters"] = []
         self.save_unit("unit_3b", unit)
+        self.post("case", unit_id="unit_3b", chosen_offer_id=self.offer_id,
+                  offer_version=main.offer_version(self.offer), source="portal")
         self.post("orders", unit_id="unit_3b", offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
                   submission_id="no-meter-order", consent_given=True)
         self.assertEqual(self.code, 400)
