@@ -1,0 +1,37 @@
+{
+  "unit_id": "unit_10b",
+  "property": {
+    "address": "Adalbertsteinweg 70, 52070 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 3,
+    "size_sqm": 64,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1166159378",
+        "last_reading": {
+          "value_kwh": 17320,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_10b",
+    "name": "Maria Becker"
+  },
+  "tenant": null,
+  "contracts": []
+}

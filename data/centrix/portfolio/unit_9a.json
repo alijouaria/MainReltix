@@ -1,0 +1,50 @@
+{
+  "unit_id": "unit_9a",
+  "property": {
+    "address": "Bendplatz 2, 52072 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 1,
+    "size_sqm": 52,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1166166548",
+        "last_reading": {
+          "value_kwh": 15760,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_19a",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_310",
+    "name": "Clara Wagner",
+    "email": "clara@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2025-06-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 598,
+      "start": "2025-06-01"
+    }
+  ]
+}

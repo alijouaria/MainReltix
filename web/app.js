@@ -3,6 +3,7 @@ const chatHistory = [];
 // Each role has its own page (tenant.html, landlord.html, partner.html) with only its own elements.
 // Elements that belong to another role's page resolve to a detached placeholder, so shared code is safe.
 const ROLE = document.body.dataset.role;
+const UNIT = new URLSearchParams(location.search).get("unit") || "unit_4b"; // which flat this page shows
 const ABSENT = document.createElement("div");
 const byId = (id) => document.getElementById(id) || ABSENT;
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -21,7 +22,7 @@ function electricityMeter() {
 
 function daysUntil(value) {
   if (!value) return null;
-  const today = new Date();
+  const today = state.today ? new Date(`${state.today}T00:00:00`) : new Date(); // demo clock from centrix
   today.setHours(0, 0, 0, 0);
   const expiry = new Date(`${value}T00:00:00`);
   return Math.ceil((expiry - today) / 86_400_000);
@@ -49,7 +50,7 @@ function renderOffers(targetId, selectable = false) {
   if (selectable) target.querySelectorAll("button.offer-row").forEach((row) => row.addEventListener("click", () => {
     chosenOffer = Number(row.dataset.index);
     renderOffers(targetId, true);
-    renderJob();
+    window.flow?.render();
   }));
 }
 
@@ -165,7 +166,7 @@ function localAgentReply(message) {
   if (/offer|compare|renew|tariff|deal/.test(text)) {
     if (!offers.length) return "There aren’t any partner offers in the demo right now. The company view can add some.";
     const choices = offers.map((offer) => `${offer.product}: ${money(offer.estimated_monthly_price_eur)} per month, ${Number(offer.renewable_share_percent || 0)}% renewable, ${Number(offer.contract_months || 0)} months`).join("\n");
-    return `Here are the sample offers:\n${choices}\nThese are demo estimates. I can explain them, but this demo won’t sign or order a contract.`;
+    return `Here are the offers:\n${choices}\nThese are estimates. When you’re ready, pick one and confirm on this page. Nothing is ordered before that.`;
   }
   if (/meter|reading|kwh/.test(text)) {
     const reading = electricityMeter().switch_reading || {};
@@ -189,10 +190,11 @@ function isDirectRecordQuestion(message) {
 }
 
 async function refreshState() {
-  const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}`, { cache: "no-store" });
+  const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}&unit=${encodeURIComponent(UNIT)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not load the local demo records.");
   Object.assign(state, await response.json());
   render();
+  window.flow?.render();
 }
 
 byId("chat-form").addEventListener("submit", async (event) => {
@@ -220,7 +222,7 @@ byId("chat-form").addEventListener("submit", async (event) => {
     } else {
       const response = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: chatHistory.slice(-10) })
+        body: JSON.stringify({ messages: chatHistory.slice(-10), unit_id: UNIT })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Local model unavailable.");
@@ -256,7 +258,7 @@ byId("reading-form").addEventListener("submit", async (event) => {
   try {
     const response = await fetch("/api/reading", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value })
+      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value, unit_id: UNIT })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the reading.");
@@ -289,62 +291,8 @@ byId("offers-form").addEventListener("submit", async (event) => {
 });
 
 
-/* ---------- Partner inbox (practice mode, browser only) ---------- */
-const job = { status: "submitted", timeline: [] };
-// What the voice assistant says at each step. Replace with the ElevenLabs agent later.
-const CALL_LINES = {
-  submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.customer} at ${o.address} would like your ${o.plan} plan at ${o.price} a month, starting ${prettyDate(o.start)}.`, `Can you take this order? Just say yes or no.`],
-  received: () => [`Thanks. Is the contract ready to send? Say yes, or say “I need more info”.`],
-  needs_input: () => [`I’ve asked the customer for the meter reading. I’ll call back when I have it.`],
-  confirmed: (o) => [`Great, I’ll tell the customer it starts on ${prettyDate(o.start)}.`, `I’ll call once more on the start day to check the power is running.`],
-  active: () => [`All done. Thank you!`],
-  rejected: () => [`Understood. I’ll offer the customer another plan. Thank you.`],
-};
-const CALL_REPLIES = {
-  submitted: "“Yes” or “No”", received: "“Yes” or “I need more info”", needs_input: "Nothing to say yet", confirmed: "“Yes, it’s running” on the start day",
-};
-
-const EVENTS = {
-  submitted: ["A customer chose your plan", null],
-  received: ["You accepted the order", null],
-  needs_input: ["You asked for more info", "We asked the customer for the meter reading."],
-  confirmed: ["You marked the contract ready", (o) => `Customer was told: “Your new plan starts on ${prettyDate(o.start)}. Nothing else to do.”`],
-  active: ["Power started on your plan", () => "Landlord was sent a short note."],
-  rejected: ["You declined the order", () => "Customer will be shown other plans."],
-};
-
-function jobOrder() {
-  const offers = state.partner?.offers || [];
-  if (!offers.length || !state.unit) return null;
-  const best = offers.reduce((a, b) => Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a);
-  const offer = offers[chosenOffer] || best;
-  const contract = energyContract();
-  const meter = electricityMeter();
-  const start = contract.expiry_date ? new Date(new Date(`${contract.expiry_date}T12:00:00`).getTime() + 86_400_000).toISOString().slice(0, 10) : null;
-  const r = meter.switch_reading;
-  return {
-    customer: state.unit.tenant?.name, address: state.unit.property?.address, plan: offer.product,
-    price: money(offer.estimated_monthly_price_eur), start, meter: meter.number,
-    reading: r?.value_kwh != null ? `${Number(r.value_kwh).toLocaleString("en-GB")} kWh` : "Customer sends it on the start day",
-    old: contract.supplier,
-  };
-}
-
-function renderJob() {
-  const o = jobOrder();
-  if (!o) return;
-  if (!job.timeline.length) job.timeline.push({ status: "submitted", at: new Date() });
-  byId("call-script").innerHTML = (CALL_LINES[job.status] || (() => []))(o)
-    .map((line) => `<div class="call-line"><b>Assistant</b> ${esc(line)}</div>`).join("")
-    + (CALL_REPLIES[job.status] ? `<div class="call-line you"><b>You say</b> ${esc(CALL_REPLIES[job.status])}</div>` : "");
-  byId("company-title").textContent = job.status === "active" ? "Order complete" : job.status === "rejected" ? "Order declined" : "New order";
-  byId("job-timeline").innerHTML = job.timeline.slice().reverse().map((e) => {
-    const [title, note] = EVENTS[e.status];
-    return `<li><strong>${esc(title)}</strong><span class="muted">${e.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}${note ? ` · ${esc(note(o))}` : ""}</span></li>`;
-  }).join("");
-}
-
-byId("job-reset").addEventListener("click", () => { Object.assign(job, { status: "submitted", timeline: [] }); renderJob(); });
+/* ---------- Partner inbox: real orders, see flow.js ---------- */
+function renderJob() { window.flow?.renderPartner(); }
 
 /* ---------- Plans editor: simple rows, saved through the existing offers form ---------- */
 function planRow(offer = {}) {

@@ -1,0 +1,77 @@
+{
+  "unit_id": "unit_7a",
+  "property": {
+    "address": "Wilhelmstraße 55, 52070 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 0,
+    "size_sqm": 90,
+    "rooms": 4,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1161961905",
+        "last_reading": {
+          "value_kwh": 20700,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_17a",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_309",
+    "name": "Hannah Fischer",
+    "email": "hannah@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2019-06-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 1035,
+      "start": "2019-06-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_7a",
+      "customer_contact_id": "c_309",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "ending",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2850,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-31",
+      "replaced_by_order": "ord_earlier",
+      "current_monthly_price_eur": 102.15
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "EGE-7A0001",
+      "customer_contact_id": "c_309",
+      "supplier": "Example Green Energy GmbH",
+      "product": "Green Home 12",
+      "status": "signed",
+      "start": "2027-01-01",
+      "current_monthly_price_eur": 96.2
+    }
+  ]
+}

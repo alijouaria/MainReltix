@@ -1,0 +1,25 @@
+{
+  "partner_id": "partner_example_energy",
+  "partner": "Example Green Energy GmbH",
+  "category": "electricity",
+  "offers": [
+    {
+      "offer_id": "green_home_12_12m",
+      "product": "Green Home 12",
+      "estimated_monthly_price_eur": 78.4,
+      "contract_months": 12,
+      "renewable_share_percent": 100,
+      "available_from": null,
+      "requires_meter_reading": true
+    },
+    {
+      "offer_id": "flex_home_12_12m",
+      "product": "Flex Home 12",
+      "estimated_monthly_price_eur": 74.9,
+      "contract_months": 12,
+      "renewable_share_percent": 50,
+      "available_from": null,
+      "requires_meter_reading": true
+    }
+  ]
+}

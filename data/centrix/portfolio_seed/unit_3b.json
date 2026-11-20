@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_3b",
+  "property": {
+    "address": "Pontstraße 88, 52062 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 3,
+    "size_sqm": 72,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": null,
+        "last_reading": {
+          "value_kwh": 18360,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_13b",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_302",
+    "name": "Thomas Müller",
+    "email": "thomas@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2022-02-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 828,
+      "start": "2022-02-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_3b",
+      "customer_contact_id": "c_302",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2580,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-05",
+      "current_monthly_price_eur": 93.6
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_5a",
+  "property": {
+    "address": "Theaterstraße 7, 52062 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 1,
+    "size_sqm": 58,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1169489620",
+        "last_reading": {
+          "value_kwh": 16540,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_15a",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_306",
+    "name": "Sophie Schneider",
+    "email": "sophie@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2025-01-15",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 667,
+      "start": "2025-01-15"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_5a",
+      "customer_contact_id": "c_306",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2370,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2027-03-31",
+      "current_monthly_price_eur": 86.95
+    }
+  ]
+}

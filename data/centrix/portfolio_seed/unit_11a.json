@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_11a",
+  "property": {
+    "address": "Lothringerstraße 14, 52070 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 2,
+    "size_sqm": 80,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1162408186",
+        "last_reading": {
+          "value_kwh": 19400,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_11a",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_304",
+    "name": "Elena Popescu",
+    "email": "elena@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2024-09-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 920,
+      "start": "2024-09-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_11a",
+      "customer_contact_id": "c_304",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 45,
+      "annual_consumption_kwh": 2700,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-28",
+      "current_monthly_price_eur": 97.4
+    }
+  ]
+}

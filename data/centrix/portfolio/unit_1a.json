@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_1a",
+  "property": {
+    "address": "Jakobstraße 21, 52064 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 0,
+    "size_sqm": 54,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740304",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_11a",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_301",
+    "name": "Jonas Weber",
+    "email": "jonas@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2023-08-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 621,
+      "start": "2023-08-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_1a",
+      "customer_contact_id": "c_301",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2310,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-10",
+      "current_monthly_price_eur": 85.05
+    }
+  ]
+}

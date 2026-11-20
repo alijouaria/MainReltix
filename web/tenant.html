@@ -8,6 +8,8 @@
   <title>Reltix · Resident</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
+  <script src="/vendor/elevenlabs-client.js" defer></script>
+  <script src="/flow.js" defer></script>
 </head>
 <body data-role="tenant">
   <header class="topbar">
@@ -20,6 +22,8 @@
     <!-- RESIDENT: one message, one decision -->
     <section class="view active" id="tenant-view" aria-labelledby="tenant-title">
       <div class="effort"><span class="effort-num">1</span><div><strong>tap to decide</strong><span>Reaches the resident by SMS + email link. No login, no forms unless the meter needs a read.</span></div></div>
+
+      <article class="call-card" id="call-card" aria-live="polite"></article>
 
       <article class="message-card">
         <div class="message-head">
@@ -39,10 +43,11 @@
 
         <div class="section-label"><span>Your options</span><span class="count-label" id="offer-count">0 offers</span></div>
         <div class="offer-list" id="tenant-offers"></div>
-        <p class="fine-print">Demo estimates. Choosing here does not order or sign anything.</p>
+        <p class="fine-print">Estimates from the partner. Nothing is ordered until you confirm below.</p>
+        <div id="decision" aria-live="polite"></div>
       </article>
 
-      <details class="fold">
+      <details class="fold" id="reading-fold">
         <summary><span>Meter reading</span><span class="badge badge-soft" id="reading-status">Not entered</span></summary>
         <p class="muted small">Only needed when the supplier changes and the meter isn’t read remotely.</p>
         <form id="reading-form" class="reading-form">
@@ -63,6 +68,6 @@
     </section>
   </main>
 
-  <footer class="app-footer">Reltix · local demo · sample data, no external services</footer>
+  <footer class="app-footer">Reltix · local demo · sample data · <button class="text-button" id="demo-reset" type="button">Reset demo</button></footer>
 </body>
 </html>

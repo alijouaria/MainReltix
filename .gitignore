@@ -2,3 +2,10 @@
 .venv/
 __pycache__/
 *.pyc
+# runtime demo state (created by main.py)
+data/centrix/orders.json
+data/centrix/case_events.json
+data/centrix/calls.json
+data/centrix/trigger_run.json
+data/centrix/demo_clock.json
+node_modules/

@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_2c",
+  "property": {
+    "address": "Kaiserstraße 40, 40479 Düsseldorf",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 4,
+    "size_sqm": 66,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1166380981",
+        "last_reading": {
+          "value_kwh": 17580,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_12c",
+    "name": "Rheinwohnen GmbH"
+  },
+  "tenant": {
+    "contact_id": "c_305",
+    "name": "Aylin Kaya",
+    "email": "aylin@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2023-03-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 759,
+      "start": "2023-03-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_2c",
+      "customer_contact_id": "c_305",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2490,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-12-15",
+      "current_monthly_price_eur": 90.75
+    }
+  ]
+}

@@ -37,7 +37,8 @@
     "name": "Lena Hoffmann",
     "email": "lena@example.com",
     "phone": "+49 151 00000000",
-    "move_in": "2024-04-01"
+    "move_in": "2024-04-01",
+    "contract_sharing_opt_in": true
   },
   "contracts": [
     {

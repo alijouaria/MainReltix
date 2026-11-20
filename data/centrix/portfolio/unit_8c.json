@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_8c",
+  "property": {
+    "address": "Monheimsallee 5, 52062 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 1,
+    "size_sqm": 61,
+    "rooms": 2,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1161497852",
+        "last_reading": {
+          "value_kwh": 16930,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_18c",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_303",
+    "name": "Yusuf Demir",
+    "email": "yusuf@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2021-05-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 702,
+      "start": "2021-05-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_8c",
+      "customer_contact_id": "c_303",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2415,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2026-11-15",
+      "current_monthly_price_eur": 88.38
+    }
+  ]
+}

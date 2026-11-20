@@ -1,0 +1,65 @@
+{
+  "unit_id": "unit_4b",
+  "property": {
+    "address": "Musterstraße 12, 52062 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 2,
+    "size_sqm": 68,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1160123456",
+        "last_reading": {
+          "value_kwh": 18420,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_101",
+    "name": "Maria Becker"
+  },
+  "tenant": {
+    "contact_id": "c_202",
+    "name": "Lena Hoffmann",
+    "email": "lena@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2024-04-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 780,
+      "start": "2024-04-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_c_88",
+      "customer_contact_id": "c_202",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "expiry_date": "2026-12-31",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2400,
+      "current_monthly_price_eur": 82.5,
+      "meter_reading_required_at_switch": true
+    }
+  ]
+}
