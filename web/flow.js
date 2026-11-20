@@ -349,7 +349,11 @@ function chooseOffer(id, version) {
   resident.error = "";
   resident.selectedVersion = version;
   renderDecision();
-  if (id) post("/api/case", { unit_id: UNIT, chosen_offer_id: id, source: "portal" }).then(refreshState).catch(() => {});
+  if (id) post("/api/case", { unit_id: UNIT, chosen_offer_id: id, offer_version: version, source: "portal" }).then(refreshState).catch((error) => {
+    resident.consent = false;
+    resident.error = error.message;
+    renderDecision();
+  });
 }
 
 function syncOfferVersion() {
@@ -555,7 +559,10 @@ function renderManager() {
   const log = state.unit.consent_log || [];
   byId("consent-count").textContent = `${log.length} ${log.length === 1 ? "entry" : "entries"}`;
   byId("consent-log").innerHTML = log.length
-    ? log.map((c) => `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)} · ${esc(c.order_id)}</span><strong>${esc(c.recipient || c.partner)}: ${esc((c.approved_fields || c.data_shared || []).join(", "))}</strong></div>`).join("")
+    ? log.map((c) => {
+      const terms = c.offer_snapshot || {};
+      return `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)} · ${esc(c.signed_name || c.given_by || "tenant")} · ${esc(c.order_id)}</span><strong>Shared with ${esc(c.recipient || c.partner)}: ${esc((c.approved_fields || c.data_shared || []).join(", "))}. Approved ${esc(terms.product || "plan")} at ${money(terms.estimated_monthly_price_eur)} / month for ${esc(terms.contract_months)} months.</strong></div>`;
+    }).join("")
     : `<p class="muted small">No personal data has been shared with a partner.</p>`;
 
   const energy = (state.unit.contracts || []).filter((c) => c.type === "energy_supply");

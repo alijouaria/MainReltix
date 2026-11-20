@@ -41,6 +41,8 @@ class HandoverTests(unittest.TestCase):
         return self.result
 
     def order(self, unit):
+        self.post("case", unit_id=unit, chosen_offer_id=self.offer_id,
+                  offer_version=main.offer_version(self.offer), source="portal")
         order = self.post("orders", unit_id=unit, offer_id=self.offer_id, offer_version=main.offer_version(self.offer),
                           submission_id="handover-" + unit, consent_given=True)["order"]
         self.assertEqual(self.code, 201)
