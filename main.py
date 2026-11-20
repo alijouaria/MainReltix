@@ -23,14 +23,14 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:0.5b"
 
 
-ROLE_PAGES = {"/tenant": "tenant.html", "/landlord": "landlord.html", "/partner": "partner.html"}
+ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html"}
 
 
 def view_for(role: str, unit: dict, partner: dict) -> dict:
     """Return only the records a role may see (data minimisation per connector spec)."""
     contracts = unit.get("contracts", [])
     energy = next((c for c in contracts if c.get("type") == "energy_supply"), {})
-    if role == "landlord":
+    if role == "reltix":
         return {"unit": unit, "partner": partner}
     if role == "tenant":
         return {
@@ -56,7 +56,7 @@ def view_for(role: str, unit: dict, partner: dict) -> dict:
             },
             "partner": partner,
         }
-    raise ValueError("Unknown role. Use tenant, landlord or partner.")
+    raise ValueError("Unknown role. Use tenant or reltix.")
 
 
 def read_json(path: Path) -> dict:
