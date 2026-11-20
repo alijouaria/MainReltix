@@ -61,5 +61,9 @@
       "expiry_date": "2026-12-10",
       "current_monthly_price_eur": 85.05
     }
-  ]
+  ],
+  "renewal_case": {
+    "callback": "in 10 seconds",
+    "updated_at": "2026-11-20T20:34:41Z"
+  }
 }
