@@ -1,0 +1,111 @@
+{
+  "scenario_id": "energy_renewal_unit_4b",
+  "assumptions": {
+    "currency": "EUR",
+    "contract_expiry_outreach_days": 60,
+    "tenant_must_confirm_offer": true,
+    "tenant_must_consent_before_data_sharing": true,
+    "providers_and_offers_are_demo_fixtures": true,
+    "meter_reading_is_required_for_switch": true
+  },
+  "centrix_snapshot": {
+    "unit_id": "unit_4b",
+    "property": {
+      "address": "Musterstraße 12, 52062 Aachen",
+      "heating": "gas central heating"
+    },
+    "unit": {
+      "floor": 2,
+      "size_sqm": 68,
+      "meters": [
+        {
+          "type": "electricity",
+          "number": "DEMO-E-0000042"
+        }
+      ]
+    },
+    "tenant": {
+      "contact_id": "c_202",
+      "name": "Lena Hoffmann",
+      "email": "lena@example.com",
+      "phone": "+49 151 00000000",
+      "preferred_channel": "portal"
+    },
+    "property_manager": {
+      "contact_id": "pm_014",
+      "name": "Alex Morgan",
+      "notification_preference": "status_only"
+    },
+    "energy_contract": {
+      "contract_id": "energy_c_88",
+      "category": "electricity",
+      "supplier": "Demo Stadtenergie",
+      "status": "active",
+      "contract_end_date": "2026-12-31",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2400,
+      "current_monthly_price_eur": 82.5,
+      "meter_reading_required_at_switch": true
+    }
+  },
+  "trigger_event": {
+    "event_id": "evt_energy_expiry_2026_11_20_0042",
+    "event": "energy.contract_expiring",
+    "occurred_at": "2026-11-20T09:14:00Z",
+    "unit_id": "unit_4b",
+    "contact_id": "c_202",
+    "data": {
+      "contract_id": "energy_c_88",
+      "contract_end_date": "2026-12-31",
+      "days_until_expiry": 41,
+      "renewal_window_open": true
+    }
+  },
+  "renewal_case": {
+    "case_id": "case_energy_0042",
+    "status": "awaiting_tenant_preferences",
+    "created_at": "2026-11-20T09:14:02Z",
+    "next_action": "Ask tenant whether to compare demo offers",
+    "tenant_preferences": {
+      "priority": null,
+      "green_energy_only": null,
+      "maximum_monthly_price_eur": null
+    },
+    "data_sharing_consent": {
+      "status": "not_requested",
+      "shared_with_provider": [],
+      "given_at": null,
+      "channel": null
+    }
+  },
+  "demo_partner_offers": [
+    {
+      "offer_id": "offer_green_12m",
+      "partner_id": "partner_example_energy",
+      "partner": "Example Green Energy GmbH",
+      "product": "Green Home 12",
+      "category": "electricity",
+      "estimated_monthly_price_eur": 78.4,
+      "contract_months": 12,
+      "renewable_share_percent": 100,
+      "available_from": "2027-01-01",
+      "eligibility": "demo estimate; confirm with provider",
+      "requires_meter_reading": true
+    },
+    {
+      "offer_id": "offer_flex_12m",
+      "partner_id": "partner_example_energy",
+      "partner": "Example Green Energy GmbH",
+      "product": "Flex Home 12",
+      "category": "electricity",
+      "estimated_monthly_price_eur": 74.9,
+      "contract_months": 12,
+      "renewable_share_percent": 50,
+      "available_from": "2027-01-01",
+      "eligibility": "demo estimate; confirm with provider",
+      "requires_meter_reading": true
+    }
+  ],
+  "partner_order": null,
+  "centrix_result": null
+}
