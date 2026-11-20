@@ -82,19 +82,6 @@
       }
     ]
   },
-  "trigger_event": {
-    "event_id": "evt_energy_expiry_2026_11_20_0042",
-    "event": "energy.contract_expiring",
-    "occurred_at": "2026-11-20T09:14:00Z",
-    "unit_id": "unit_4b",
-    "contact_id": "c_202",
-    "data": {
-      "contract_id": "energy_c_88",
-      "contract_end_date": "2026-12-31",
-      "days_until_expiry": 41,
-      "renewal_window_open": true
-    }
-  },
   "renewal_case": {
     "case_id": "case_energy_0042",
     "status": "awaiting_tenant_preferences",
@@ -141,7 +128,7 @@
   "additional_examples": [
     {
       "scenario_id": "gas_renewal_unit_5a",
-      "description": "Gas contract enters its renewal window; tenant prefers renewable gas and must be asked before provider data sharing.",
+      "description": "Gas contract expiry is stored as source data; the agent calculates when outreach is due. Tenant prefers renewable gas and must be asked before provider data sharing.",
       "centrix_snapshot": {
         "unit_id": "unit_5a",
         "property": {
@@ -212,20 +199,6 @@
           }
         ]
       },
-      "trigger_event": {
-        "event_id": "evt_gas_expiry_2026_11_20_0055",
-        "event": "energy.contract_expiring",
-        "occurred_at": "2026-11-20T10:05:00Z",
-        "unit_id": "unit_5a",
-        "contact_id": "c_255",
-        "data": {
-          "contract_id": "gas_c_55",
-          "energy_type": "gas",
-          "contract_end_date": "2027-01-15",
-          "days_until_expiry": 56,
-          "renewal_window_open": true
-        }
-      },
       "renewal_case": {
         "case_id": "case_gas_0055",
         "status": "awaiting_tenant_preferences",
@@ -239,7 +212,7 @@
     },
     {
       "scenario_id": "electricity_not_yet_due_unit_2c",
-      "description": "Contract expiry is outside the 60-day outreach window; record it for monitoring without contacting the tenant yet.",
+      "description": "Example contract with a later expiry; the agent should calculate whether outreach is due from the expiry date and renewal policy.",
       "centrix_snapshot": {
         "unit_id": "unit_2c",
         "property": {
@@ -304,15 +277,7 @@
           }
         ]
       },
-      "monitoring": {
-        "checked_at": "2026-11-20T10:06:00Z",
-        "days_until_expiry": 101,
-        "renewal_window_days": 60,
-        "renewal_window_open": false,
-        "action": "schedule_recheck",
-        "next_check_at": "2027-01-01T09:00:00Z",
-        "resident_contacted": false
-      }
+      "monitoring_note": "No trigger or derived timing is stored; calculate it at runtime from contract_end_date and the renewal policy."
     }
   ],
   "demo_partner_offers": [
