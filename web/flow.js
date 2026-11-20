@@ -279,7 +279,7 @@ function renderPhone() {
   const who = state.unit?.tenant?.name || "";
   let sub, buttons;
   if (ringingNow) {
-    sub = `Incoming call${call.incoming.urgent ? " · urgent" : ""}${audioReady() ? "" : `<br><span class="phone-hint">Tap anywhere to hear it ring</span>`}`;
+    sub = `Incoming call${call.incoming.urgent ? " · urgent" : ""}${audioReady() ? "" : `<br><span class="phone-tap-hint">Tap anywhere to hear it ring</span>`}`;
     buttons = `
       <div class="phone-btn-wrap"><button class="phone-btn decline" type="button" data-call="decline" aria-label="Decline">${ICON_PHONE}</button><span>Decline</span></div>
       <div class="phone-btn-wrap"><button class="phone-btn answer" type="button" data-call="answer" aria-label="Answer">${ICON_PHONE}</button><span>Answer</span></div>`;

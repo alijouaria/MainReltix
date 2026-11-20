@@ -486,7 +486,7 @@ body.in-call { overflow: hidden; }
 #phone-screen.ringing .phone-avatar, #phone-screen.speaking .phone-avatar { animation: phonepulse 1.4s ease-out infinite; }
 @keyframes phonepulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); } 100% { box-shadow: 0 0 0 28px rgba(52,211,153,0); } }
 .phone-sub { margin: 0; font-size: 17px; opacity: .85; }
-.phone-hint { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.15); font-size: 14px; }
+.phone-tap-hint { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.15); font-size: 14px; }
 .phone-about { margin: 10px 0 0; font-size: 14px; opacity: .6; }
 .phone-lines { width: 100%; max-width: 420px; min-height: 80px; font-size: 15px; line-height: 1.4; opacity: .85; }
 .phone-lines p { margin: 6px 0; text-align: left; }
@@ -505,3 +505,23 @@ body.in-call { overflow: hidden; }
 #phone-screen.ringing .phone-btn.answer { animation: phonebounce 1s ease-in-out infinite; }
 @keyframes phonebounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 @media (prefers-reduced-motion: reduce) { #phone-screen *, #phone-screen { animation: none !important; } }
+
+/* tenant complaint call card */
+.complaint-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; margin-top: 16px; padding: 22px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); border-radius: 20px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 58%, var(--surface)), var(--surface) 76%); box-shadow: 0 12px 30px -25px rgb(15 42 29 / .38); }
+.complaint-copy { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.complaint-icon { display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: 15px; background: var(--accent-soft); color: var(--accent); }
+.complaint-icon .icon { width: 21px; height: 21px; }
+.complaint-kicker { margin: 0 0 4px; color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.complaint-text h2 { margin: 0 0 6px; font-size: 1.4rem; }
+.complaint-text > p:last-child { max-width: 46ch; margin: 0; color: var(--muted); font-size: .9rem; }
+.complaint-action { display: grid; justify-items: end; gap: 7px; }
+.call-agent-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 170px; white-space: nowrap; }
+.call-agent-button:disabled { cursor: not-allowed; background: var(--line); border-color: var(--line); color: var(--muted); opacity: .9; }
+.call-agent-button:disabled:hover { background: var(--line); border-color: var(--line); color: var(--muted); }
+.call-agent-note { margin: 0; color: var(--muted); font-size: .75rem; text-align: right; }
+@media (max-width: 640px) {
+  .complaint-card { grid-template-columns: 1fr; gap: 16px; padding: 18px; }
+  .complaint-action { justify-items: start; }
+  .call-agent-button { width: 100%; }
+  .call-agent-note { text-align: left; }
+}
