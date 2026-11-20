@@ -80,7 +80,7 @@ Thresholds are config values. Outcome feedback (craftsman: "fault found y/n") is
 ## Architecture (approach A, chosen)
 
 - **Backend:** Python, FastAPI, SQLite. Modules: `data` (synthetic generator + seed), `detectors`, `ladder`, `matching` (craftsman ranking), `agent` (OpenAI: triage explanation, message drafting, call script), `channels` (`VoiceChannel` interface: `SimulatedVoice` now, `ElevenLabsVoice` later via ElevenLabs server tools/webhooks; `MessageChannel` for tenant/landlord), `connector` (partner API per spec), event log / case timeline.
-- **Frontend:** React + Vite, one app, four role views:
+- **Demo page (stand-in only, centrix already exists):** one plain HTML page served by FastAPI, panels for:
   - centrix PM dashboard: building map of units with risk, alert feed, case timeline, unit record.
   - Tenant portal: check-in question, appointment notice, reschedule, status.
   - Landlord: approval card with evidence + estimate, status.
@@ -119,7 +119,7 @@ Second alert (shown on dashboard, not walked through): central boiler short-cycl
 - **LLM with canned fallback:** OpenAI used live; every LLM output has a recorded fallback so the demo runs without network/key.
 - **Demo clock:** scripted scenario steps over a virtual clock (`now()` injectable). "Advance" button jumps to next event; detectors, ladder waits, "silence = accepted" deadline read virtual time.
 - **Ladder may skip steps** when confidence is high (e.g. clear boiler fault code → straight to visit; tenant "yes, cold" → raises confidence). Rules in config.
-- **Views:** one app, role switcher plus a "judge view" split screen showing all four at once; live updates via SSE.
+- **Integration:** Guardian talks to centrix only via a `CentrixClient` adapter (PDF snapshot/trigger/write-back shapes), mocked over SQLite; inbound `POST /centrix/events` webhook. One simple page, live updates via SSE.
 - **Connector implemented, not only documented:** `POST /partner/jobs` + `POST /partner/jobs/{id}/status` exist; the simulated voice adapter calls them, so voice and API partners share one path.
 - **Runs locally** on a laptop; reset/replay command reseeds SQLite.
 

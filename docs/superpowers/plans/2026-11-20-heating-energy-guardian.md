@@ -4,9 +4,9 @@
 
 **Goal:** A local demo where centrix (mocked) detects unit 2a heat drift, escalates via tenant check-in, gets landlord approval for €380, books a craftsman by (simulated) voice call through the partner connector, and closes the case on the unit with invoice — visible live in four role views.
 
-**Architecture:** FastAPI backend with SQLite as the mocked centrix record, a virtual clock, pure-function detectors / ladder / matching, an orchestrator state machine that drives the case, and an LLM layer with canned fallbacks. Partner connector is a real HTTP router the simulated voice adapter calls. React+Vite frontend with role switcher and a 4-pane judge view fed by SSE.
+**Architecture:** FastAPI backend with SQLite as the mocked centrix record, a virtual clock, pure-function detectors / ladder / matching, an orchestrator state machine that drives the case, and an LLM layer with canned fallbacks. Partner connector is a real HTTP router the simulated voice adapter calls. Guardian is a service that plugs into the existing centrix through a `CentrixClient` adapter (mocked, since centrix is not reachable); one plain HTML page stands in for the channels.
 
-**Tech Stack:** Python 3.11+, FastAPI, uvicorn, pydantic v2, sqlite3 (stdlib), pandas, openai, python-dotenv, pytest, httpx; React 18 + Vite + TypeScript.
+**Tech Stack:** Python 3.11+, FastAPI, uvicorn, pydantic v2, sqlite3 (stdlib), pandas, openai, python-dotenv, pytest, httpx.
 
 **Spec:** `docs/superpowers/specs/2026-11-20-heating-energy-guardian-design.md`
 
@@ -19,7 +19,7 @@
 - All time reads go through the virtual clock; never `datetime.now()` in app code.
 - Partners receive only job data: address, access window, fault evidence summary, boiler model. Never consumption series.
 - Seeded RNG (`seed=42`) so the demo is deterministic.
-- Runs locally: backend `:8000`, frontend `:5173`.
+- Runs locally: one process on `:8000` serving API and the page. No frontend framework.
 
 ## Review Focus
 
@@ -128,6 +128,7 @@
 - Produces:
   - Case statuses: `detected → awaiting_tenant → awaiting_landlord → booking → scheduled → in_progress → completed`; side states `on_hold`, `needs_pm`, `closed_no_action`.
   - `orchestrator.py`: `async advance(conn) -> dict` (performs the next automatic step for the open case, or advances clock to next scheduled event); `tenant_answer(conn, case_id, answer: Literal["yes","no"])`; `landlord_decision(conn, case_id, approve: bool)`; `tenant_reschedule(conn, case_id, slot_iso)`; `reset(conn)`.
+  - `centrix.py` (integration boundary — real centrix is not reachable, so this is the adapter Guardian talks to): `class CentrixClient(Protocol)`: `get_unit_snapshot(unit_id) -> dict` (PDF property-snapshot shape: unit_id, property, unit{meters}, owner, tenant, contracts), `write_result(unit_id, result: dict) -> None` (PDF write-back shape, here `{"unit_id","contact_id","service_job":{partner, category:"heating_repair", status, appointment, invoice, cost_eur, consent{data_shared, given_at, channel}}}`), `post_case_event(case_id, event: dict)`. `MockCentrix(conn)` implements it over the SQLite store. Inbound webhook `POST /centrix/events` accepts PDF trigger-event shape (`event`, `occurred_at`, `unit_id`, `contact_id`, `data`); Guardian emits its own detections as `event: "heating.anomaly_detected"`. Orchestrator reads/writes centrix ONLY through `CentrixClient`.
   - `events.py`: `publish(event: dict)`, `subscribe() -> AsyncIterator[str]` (in-process asyncio queues).
   - `main.py` routes: `GET /api/state` (building, units with risk, alerts, cases+events, messages, jobs, clock), `POST /api/advance`, `POST /api/tenant/{case_id}/answer`, `POST /api/landlord/{case_id}/decision`, `POST /api/tenant/{case_id}/reschedule`, `POST /api/reset`, `GET /api/events` (SSE); includes connector router; CORS for `:5173`.
 - [ ] **Step 1:** Tests: `test_golden_path` — reset; advance → alert + case for 2a in `awaiting_tenant`, tenant message exists; answer yes → `awaiting_landlord`, approval amount 380; approve → advance → job created via connector, craftsman #1 declined, #2 accepted, status `scheduled`, slot inside tenant window, tenant notice message; advance (clock past slot) → outcome call, invoice 380 linked, status `completed`, summary messages to tenant and owner; second alert (short_cycling) exists but no case progressed. Review Focus tests: `test_reschedule_outside_availability_reoffers`, `test_all_decline_needs_pm`, `test_landlord_reject_on_hold`, `test_reset_mid_flow`. API smoke `test_state_endpoint`.
@@ -136,24 +137,24 @@
 - [ ] **Step 4:** Run `pytest -v` (all) → PASS.
 - [ ] **Step 5:** Commit `feat: orchestrator state machine, api and sse`.
 
-### Task 7: Frontend — four role views + judge view
+### Task 7: Simple demo web page (stand-in channels)
+
+We are NOT building an app: centrix already exists. Guardian is a service that plugs into it. The page is only a lightweight stand-in for the channels (tenant portal message, landlord one-click link, partner call) plus a view of what Guardian writes back to centrix.
 
 **Files:**
-- Create: `frontend/` (Vite React TS): `src/api.ts`, `src/useLiveState.ts`, `src/views/Centrix.tsx`, `src/views/Tenant.tsx`, `src/views/Landlord.tsx`, `src/views/Partner.tsx`, `src/views/Judge.tsx`, `src/App.tsx`
-- Test: manual run checklist below (no frontend unit tests — YAGNI for 24h demo).
+- Create: `backend/app/static/index.html` (single file, plain HTML + vanilla JS + inline CSS, no build step); served by FastAPI at `/`.
+- Test: `backend/tests/test_api.py::test_index_served` (GET `/` → 200, contains "Guardian"); manual checklist below.
 
 **Interfaces:**
-- Consumes: Task 6 routes. `useLiveState()` fetches `/api/state` and refetches on every SSE event.
-- [ ] **Step 1:** Scaffold `npm create vite@latest frontend -- --template react-ts`; add proxy `/api`, `/partner` → `:8000`.
-- [ ] **Step 2:** Build views:
-  - Centrix: unit grid coloured by risk, alert feed with evidence (sparkline 2a vs neighbours) + likely causes %, case timeline (case_events), ladder step indicator, Advance + Reset buttons, demo clock.
-  - Tenant (2a): check-in Yes/No, appointment notice with Reschedule, status tracker.
-  - Landlord: approval card (evidence, estimate breakdown, Approve/Reject), status.
-  - Partner: streaming call transcript bubbles, job card (only connector fields).
-  - Judge: 2×2 grid of the four.
-  - App: role switcher tabs, default Judge.
-- [ ] **Step 3:** Verify: run backend `uvicorn app.main:app --port 8000` and `npm run dev`; click through golden path in Judge view: alert → Yes → Approve → Advance → transcript shows decline then accept → notice → Advance → completed with invoice. No console errors.
-- [ ] **Step 4:** Commit `feat: frontend role views and judge view`.
+- Consumes: Task 6 routes; fetches `/api/state`, re-fetches on every SSE event from `/api/events`.
+- [ ] **Step 1:** Mount static dir in `main.py`; write `test_index_served`; run → FAIL then PASS after page exists.
+- [ ] **Step 2:** One page, four stacked panels:
+  - centrix write-back: unit 2a record with alert (risk, evidence numbers, likely causes %), case timeline, final result payload JSON; Advance + Reset buttons; demo clock.
+  - Tenant message (2a): check-in Yes/No, appointment notice with Reschedule.
+  - Landlord message: estimate breakdown, Approve/Reject.
+  - Partner call: transcript lines, job card (connector fields only).
+- [ ] **Step 3:** Verify: `uvicorn app.main:app --port 8000`, open `http://localhost:8000/`, click golden path: alert → Yes → Approve → Advance → decline then accept → notice → Advance → completed with invoice. No console errors.
+- [ ] **Step 4:** Commit `feat: simple demo page for channels and centrix write-back`.
 
 ### Task 8: Run scripts and README
 
