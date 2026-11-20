@@ -12,41 +12,75 @@
     "unit_id": "unit_4b",
     "property": {
       "address": "Musterstraße 12, 52062 Aachen",
-      "heating": "gas central heating"
+      "building_year": 1972,
+      "heating": "gas central heating",
+      "energy_certificate": {
+        "class": "E",
+        "valid_until": "2029-03-31"
+      }
     },
     "unit": {
       "floor": 2,
       "size_sqm": 68,
+      "rooms": 3,
       "meters": [
         {
           "type": "electricity",
-          "number": "DEMO-E-0000042"
+          "number": "DEMO-E-0000042",
+          "location": "utility_cupboard",
+          "last_reading": {
+            "value_kwh": 18420,
+            "read_at": "2026-09-30"
+          }
         }
       ]
+    },
+    "owner": {
+      "contact_id": "c_101",
+      "name": "Maria Becker",
+      "email": "maria@example.com",
+      "phone": "+49 151 00000001",
+      "role": "property_owner"
     },
     "tenant": {
       "contact_id": "c_202",
       "name": "Lena Hoffmann",
       "email": "lena@example.com",
       "phone": "+49 151 00000000",
-      "preferred_channel": "portal"
+      "preferred_channel": "portal",
+      "move_in": "2024-04-01",
+      "move_out": null
     },
     "property_manager": {
       "contact_id": "pm_014",
       "name": "Alex Morgan",
       "notification_preference": "status_only"
     },
-    "energy_contract": {
-      "contract_id": "energy_c_88",
-      "category": "electricity",
-      "supplier": "Demo Stadtenergie",
-      "status": "active",
-      "contract_end_date": "2026-12-31",
-      "renewal_notice_days": 30,
-      "annual_consumption_kwh": 2400,
-      "current_monthly_price_eur": 82.5,
-      "meter_reading_required_at_switch": true
-    }
+    "contracts": [
+      {
+        "contract_id": "lease_4b_2024",
+        "type": "lease",
+        "status": "active",
+        "rent_cold_eur": 780,
+        "start": "2024-04-01",
+        "end": null,
+        "parties": ["c_101", "c_202"]
+      },
+      {
+        "contract_id": "energy_c_88",
+        "type": "electricity",
+        "category": "energy_supply",
+        "customer_contact_id": "c_202",
+        "supplier": "Demo Stadtenergie",
+        "status": "active",
+        "start": "2024-04-01",
+        "contract_end_date": "2026-12-31",
+        "renewal_notice_days": 30,
+        "annual_consumption_kwh": 2400,
+        "current_monthly_price_eur": 82.5,
+        "meter_reading_required_at_switch": true
+      }
+    ]
   },
   "trigger_event": {
     "event_id": "evt_energy_expiry_2026_11_20_0042",
@@ -78,6 +112,209 @@
       "channel": null
     }
   },
+  "related_cases": [
+    {
+      "case_id": "case_energy_0042",
+      "type": "energy_contract_renewal",
+      "status": "open",
+      "unit_id": "unit_4b",
+      "contact_id": "c_202",
+      "linked_contract_id": "energy_c_88",
+      "created_at": "2026-11-20T09:14:02Z",
+      "summary": "Electricity contract expires on 2026-12-31; tenant has not yet chosen a renewal offer."
+    }
+  ],
+  "communication_history": [
+    {
+      "message_id": "msg_energy_0042_1",
+      "case_id": "case_energy_0042",
+      "unit_id": "unit_4b",
+      "contact_id": "c_202",
+      "channel": "portal",
+      "direction": "outbound",
+      "sent_at": "2026-11-20T09:15:00Z",
+      "template": "energy_renewal_preferences_request",
+      "status": "queued",
+      "purpose": "Ask the tenant whether to compare available energy offers; no personal data has been shared with a provider."
+    }
+  ],
+  "additional_examples": [
+    {
+      "scenario_id": "gas_renewal_unit_5a",
+      "description": "Gas contract enters its renewal window; tenant prefers renewable gas and must be asked before provider data sharing.",
+      "centrix_snapshot": {
+        "unit_id": "unit_5a",
+        "property": {
+          "address": "Beispielweg 8, 52070 Aachen",
+          "building_year": 1998,
+          "heating": "individual gas boiler",
+          "energy_certificate": {
+            "class": "C",
+            "valid_until": "2030-06-30"
+          }
+        },
+        "unit": {
+          "floor": 1,
+          "size_sqm": 82,
+          "rooms": 3,
+          "meters": [
+            {
+              "type": "gas",
+              "number": "DEMO-G-0000055",
+              "last_reading": {
+                "value_m3": 1260,
+                "read_at": "2026-10-15"
+              }
+            }
+          ]
+        },
+        "owner": {
+          "contact_id": "c_115",
+          "name": "Jonas Weber",
+          "email": "jonas@example.com",
+          "role": "property_owner"
+        },
+        "tenant": {
+          "contact_id": "c_255",
+          "name": "Sofia Keller",
+          "email": "sofia@example.com",
+          "phone": "+49 151 00000055",
+          "preferred_channel": "email",
+          "move_in": "2023-09-01",
+          "move_out": null,
+          "energy_preferences": {
+            "renewable_gas_preferred": true,
+            "maximum_monthly_price_eur": 120
+          }
+        },
+        "contracts": [
+          {
+            "contract_id": "lease_5a_2023",
+            "type": "lease",
+            "status": "active",
+            "rent_cold_eur": 960,
+            "start": "2023-09-01",
+            "end": null,
+            "parties": ["c_115", "c_255"]
+          },
+          {
+            "contract_id": "gas_c_55",
+            "type": "gas",
+            "category": "energy_supply",
+            "customer_contact_id": "c_255",
+            "supplier": "Demo Gaswerk",
+            "status": "active",
+            "start": "2025-01-16",
+            "contract_end_date": "2027-01-15",
+            "annual_consumption_kwh": 10500,
+            "current_monthly_price_eur": 112,
+            "meter_reading_required_at_switch": true
+          }
+        ]
+      },
+      "trigger_event": {
+        "event_id": "evt_gas_expiry_2026_11_20_0055",
+        "event": "energy.contract_expiring",
+        "occurred_at": "2026-11-20T10:05:00Z",
+        "unit_id": "unit_5a",
+        "contact_id": "c_255",
+        "data": {
+          "contract_id": "gas_c_55",
+          "energy_type": "gas",
+          "contract_end_date": "2027-01-15",
+          "days_until_expiry": 56,
+          "renewal_window_open": true
+        }
+      },
+      "renewal_case": {
+        "case_id": "case_gas_0055",
+        "status": "awaiting_tenant_preferences",
+        "next_action": "Send a gas renewal offer request through email",
+        "data_sharing_consent": {
+          "status": "not_requested",
+          "shared_with_provider": [],
+          "given_at": null
+        }
+      }
+    },
+    {
+      "scenario_id": "electricity_not_yet_due_unit_2c",
+      "description": "Contract expiry is outside the 60-day outreach window; record it for monitoring without contacting the tenant yet.",
+      "centrix_snapshot": {
+        "unit_id": "unit_2c",
+        "property": {
+          "address": "Beispielallee 21, 52072 Aachen",
+          "building_year": 2015,
+          "heating": "district heating",
+          "energy_certificate": {
+            "class": "B",
+            "valid_until": "2032-12-31"
+          }
+        },
+        "unit": {
+          "floor": 3,
+          "size_sqm": 54,
+          "rooms": 2,
+          "meters": [
+            {
+              "type": "electricity",
+              "number": "DEMO-E-0000023",
+              "last_reading": {
+                "value_kwh": 7920,
+                "read_at": "2026-10-31"
+              }
+            }
+          ]
+        },
+        "owner": {
+          "contact_id": "c_123",
+          "name": "Amira Yilmaz",
+          "role": "property_owner"
+        },
+        "tenant": {
+          "contact_id": "c_223",
+          "name": "Noah Fischer",
+          "email": "noah@example.com",
+          "preferred_channel": "portal",
+          "move_in": "2025-02-01",
+          "move_out": null
+        },
+        "contracts": [
+          {
+            "contract_id": "lease_2c_2025",
+            "type": "lease",
+            "status": "active",
+            "rent_cold_eur": 690,
+            "start": "2025-02-01",
+            "end": null,
+            "parties": ["c_123", "c_223"]
+          },
+          {
+            "contract_id": "energy_c_23",
+            "type": "electricity",
+            "category": "energy_supply",
+            "customer_contact_id": "c_223",
+            "supplier": "Demo Stadtenergie",
+            "status": "active",
+            "start": "2026-01-01",
+            "contract_end_date": "2027-03-01",
+            "annual_consumption_kwh": 1850,
+            "current_monthly_price_eur": 68,
+            "meter_reading_required_at_switch": true
+          }
+        ]
+      },
+      "monitoring": {
+        "checked_at": "2026-11-20T10:06:00Z",
+        "days_until_expiry": 101,
+        "renewal_window_days": 60,
+        "renewal_window_open": false,
+        "action": "schedule_recheck",
+        "next_check_at": "2027-01-01T09:00:00Z",
+        "resident_contacted": false
+      }
+    }
+  ],
   "demo_partner_offers": [
     {
       "offer_id": "offer_green_12m",
