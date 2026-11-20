@@ -149,6 +149,7 @@ function addMessage(kind, text) {
   byId("chat-messages").scrollTop = byId("chat-messages").scrollHeight;
 }
 
+<<<<<<< Updated upstream
 function localAgentReply(message) {
   const text = message.toLowerCase();
   const tenant = state.unit.tenant || {};
@@ -189,6 +190,8 @@ function isDirectRecordQuestion(message) {
   return /\b(contract|agreement|lease|rent|offer|tariff|plans|meter|reading|kwh|tenant|resident|owner|landlord|property|home|address|rooms|heating|unit|supplier|provider|price|cost)\b/i.test(message);
 }
 
+=======
+>>>>>>> Stashed changes
 async function refreshState() {
   const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}&unit=${encodeURIComponent(UNIT)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not load the local demo records.");
@@ -215,25 +218,19 @@ byId("chat-form").addEventListener("submit", async (event) => {
   byId("chat-messages").scrollTop = byId("chat-messages").scrollHeight;
   let answer;
   try {
-    if (isDirectRecordQuestion(text)) {
-      answer = localAgentReply(text);
-      byId("assistant-mode").textContent = "JSON FACTS";
-      byId("chat-disclaimer").textContent = "Direct record lookup · Values are read from the sample JSON.";
-    } else {
-      const response = await fetch("/api/chat", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: chatHistory.slice(-10), unit_id: UNIT })
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Local model unavailable.");
-      answer = result.answer;
-      byId("assistant-mode").textContent = "QWEN 0.5B";
-      byId("chat-disclaimer").textContent = "Local language model · Answers are grounded in the sample records.";
-    }
+    const response = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: chatHistory.slice(-16), unit_id: UNIT })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Local model unavailable.");
+    answer = result.answer;
+    byId("assistant-mode").textContent = "QWEN 0.5B";
+    byId("chat-disclaimer").textContent = "Local language model · Uses the sample JSON and recent conversation.";
   } catch (error) {
-    answer = `${localAgentReply(text)}\n\n(Local LLM isn’t connected yet; showing a basic record-based reply.)`;
-    byId("assistant-mode").textContent = "BASIC MODE";
-    byId("chat-disclaimer").textContent = "Basic local replies · Start Ollama to use the small language model.";
+    answer = "I can’t reach the local assistant right now. Start Ollama and make sure qwen2.5:0.5b is installed, then try again.";
+    byId("assistant-mode").textContent = "OFFLINE";
+    byId("chat-disclaimer").textContent = "The local language model must be running for chat replies.";
   } finally {
     input.disabled = false;
     sendButton.disabled = false;

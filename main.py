@@ -714,22 +714,24 @@ class DemoHandler(BaseHTTPRequestHandler):
         history = body.get("messages", [])
         if not isinstance(history, list):
             raise ValueError("Chat messages must be a list.")
-        history = [
-            {"role": item.get("role"), "content": str(item.get("content", ""))[:4000]}
-            for item in history[-10:]
+        recent_history = [
+            {"role": item.get("role"), "content": str(item.get("content", ""))[:1200]}
+            for item in history[-16:]
             if isinstance(item, dict) and item.get("role") in ("user", "assistant")
         ]
+        history = []
+        remaining_characters = 6000
+        for item in reversed(recent_history):
+            if len(item["content"]) > remaining_characters and history:
+                break
+            history.append(item)
+            remaining_characters -= len(item["content"])
+        history.reverse()
         if not history or history[-1]["role"] != "user":
             raise ValueError("Send a user message first.")
 
         tenant_view = view_for("tenant", read_json(unit_path(str(body.get("unit_id", "unit_4b")))), read_json(OFFERS_FILE))
         context = {"unit": tenant_view["unit"], "energy_partner": tenant_view["partner"]}
-        question = history[-1]["content"]
-        direct_answer = self.lookup_answer(question, context)
-        if direct_answer:
-            self.send_json(200, {"answer": direct_answer, "mode": "record_lookup"})
-            return
-
         unit = context["unit"]
         partner = context["energy_partner"]
         energy = next((item for item in unit.get("contracts", []) if item.get("type") == "energy_supply"), {})
@@ -758,7 +760,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             "owner, lease, electricity contract, meter, and energy offers. If asked to show or summarize the contract, list its "
             "provider, product, status, start date, expiry date, monthly price, and annual usage when present. Never say you "
             "cannot access a record that is present below. Do not invent missing values. If a value is absent, say it is not "
-            "listed. Offer prices are estimates. You cannot place orders, sign contracts, contact people, or change records.\n\n"
+            "listed. Offer prices are estimates. You cannot place orders, sign contracts, contact people, or change records. "
+            "The conversation messages after the facts are part of the current chat. Resolve short follow-up questions such as "
+            "'when?', 'which one?', or 'what about it?' from that conversation before asking for clarification.\n\n"
             "CURRENT JSON FACTS:\n" + json.dumps(facts, ensure_ascii=False, indent=2)
         )
         payload = json.dumps({
