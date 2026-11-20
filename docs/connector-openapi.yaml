@@ -1,0 +1,301 @@
+openapi: 3.1.0
+info:
+  title: centrix Partner Connector
+  version: 1.0.0
+  description: |
+    One contract for every ecosystem partner (energy, internet, insurance, craftsmen).
+    See connector-spec.md for the rules behind each object.
+    Two sides: endpoints the PARTNER exposes (centrix calls them) and the
+    endpoint CENTRIX exposes (partner calls back with status).
+servers:
+  - url: https://partner.example/centrix/v1
+    description: Partner side (implemented by each partner)
+  - url: https://centrix.example/connector/v1
+    description: centrix side
+tags:
+  - name: partner
+    description: Implemented by the partner
+  - name: centrix
+    description: Implemented by centrix
+
+paths:
+  /profile:
+    get:
+      tags: [partner]
+      summary: Partner profile and offer catalogue
+      operationId: getProfile
+      responses:
+        '200':
+          description: Profile with offers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Profile'}
+  /eligibility:
+    post:
+      tags: [partner]
+      summary: Optional pre-check for rules marked check=partner
+      operationId: checkEligibility
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EligibilityRequest'}
+      responses:
+        '200':
+          description: Eligibility verdict
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EligibilityResult'}
+  /orders:
+    post:
+      tags: [partner]
+      summary: Receive an order (idempotent on order_id)
+      operationId: placeOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Order'}
+      responses:
+        '202':
+          description: Accepted for processing; status follows via callback
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StatusUpdate'}
+        '422':
+          description: Invalid order, e.g. field not in offer required_inputs
+  /orders/{order_id}/status:
+    post:
+      tags: [centrix]
+      summary: Partner reports progress (callback_url)
+      operationId: postStatus
+      parameters:
+        - {name: order_id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StatusUpdate'}
+      responses:
+        '200': {description: Recorded on the unit's case timeline}
+        '409': {description: "Illegal status transition, or slot outside access window"}
+        '422': {description: Invalid payload}
+
+components:
+  schemas:
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [partner_id, name, kind, category, channel, offers]
+      properties:
+        partner_id: {type: string}
+        name: {type: string}
+        kind: {type: string, enum: [sell, deliver]}
+        category: {type: string, examples: [energy, internet, insurance, heating, moving]}
+        channel: {type: string, enum: [api, email, voice]}
+        webhook_url: {type: string, format: uri}
+        contact:
+          type: object
+          properties:
+            ops_email: {type: string, format: email}
+        offers:
+          type: array
+          items: {$ref: '#/components/schemas/Offer'}
+
+    Offer:
+      type: object
+      additionalProperties: false
+      required: [offer_id, title, pricing, required_inputs]
+      properties:
+        offer_id: {type: string}
+        title: {type: string}
+        pricing:
+          type: object
+          description: Tariff for sell partners, price basis for deliver partners
+          properties:
+            base_eur_month: {type: number}
+            unit_price_ct_kwh: {type: number}
+            bonus_eur: {type: number}
+            callout_eur: {type: number}
+            hourly_eur: {type: number}
+        term:
+          type: object
+          properties:
+            min_months: {type: integer}
+            notice_weeks: {type: integer}
+            price_guarantee_months: {type: integer}
+        attributes: {type: object, additionalProperties: true}
+        required_inputs:
+          type: array
+          description: Only these centrix catalogue fields are sent with an order
+          items: {$ref: '#/components/schemas/CatalogueField'}
+        eligibility:
+          type: array
+          items: {$ref: '#/components/schemas/Rule'}
+        availability: {$ref: '#/components/schemas/Availability'}
+        valid_until: {type: string, format: date}
+
+    CatalogueField:
+      type: string
+      enum:
+        - unit.address
+        - unit.postcode
+        - unit.size_sqm
+        - unit.rooms
+        - tenant.name
+        - tenant.move_in
+        - tenant.move_out
+        - tenant.age_over_18
+        - meter.type
+        - meter.number
+        - meter.reading
+        - usage.annual_kwh_estimate
+        - previous_contract.supplier
+        - previous_contract.ends
+        - building.year
+        - building.heating_type
+        - access_windows
+        - fault_summary
+        - start_date
+        - iban_mandate
+
+    Rule:
+      type: object
+      additionalProperties: false
+      required: [field, op]
+      properties:
+        field: {$ref: '#/components/schemas/CatalogueField'}
+        op: {type: string, enum: [eq, in, prefix_in, between, gte, lte, exists]}
+        value: {}
+        check: {type: string, enum: [centrix, partner], default: centrix}
+
+    Availability:
+      oneOf:
+        - type: object
+          title: LeadTime (sell)
+          required: [lead_time_days]
+          properties:
+            lead_time_days: {type: integer}
+            start_on: {type: string, enum: [any_day, first_of_month]}
+        - type: object
+          title: Slots (deliver)
+          required: [slots]
+          properties:
+            slots:
+              type: array
+              items: {$ref: '#/components/schemas/Window'}
+
+    Window:
+      type: object
+      required: [start, end]
+      properties:
+        start: {type: string, format: date-time}
+        end: {type: string, format: date-time}
+
+    EligibilityRequest:
+      type: object
+      required: [offer_id, subject]
+      properties:
+        offer_id: {type: string}
+        subject: {$ref: '#/components/schemas/Subject'}
+
+    EligibilityResult:
+      type: object
+      required: [eligible]
+      properties:
+        eligible: {type: boolean}
+        reasons: {type: array, items: {type: string}}
+
+    Subject:
+      type: object
+      additionalProperties: false
+      description: Pre-filled by centrix; contains only the offer's required_inputs
+      properties:
+        unit_id: {type: string}
+        address: {type: string}
+        tenant:
+          type: object
+          additionalProperties: false
+          properties:
+            name: {type: string}
+            contact_via: {type: string, const: centrix}
+        meter:
+          type: object
+          additionalProperties: false
+          properties:
+            type: {type: string}
+            number: {type: string}
+            reading:
+              type: object
+              properties:
+                value_kwh: {type: number}
+                read_at: {type: string, format: date}
+                source: {type: string, enum: [remote_read, tenant_photo, partner_read]}
+        access_windows:
+          type: array
+          items: {$ref: '#/components/schemas/Window'}
+        fault_summary: {type: string}
+
+    Consent:
+      type: object
+      additionalProperties: false
+      required: [data_shared, given_at, channel, given_by]
+      properties:
+        data_shared:
+          type: array
+          items: {$ref: '#/components/schemas/CatalogueField'}
+        given_at: {type: string, format: date-time}
+        channel: {type: string, enum: [portal, email, sms, voice]}
+        given_by: {type: string, description: centrix contact_id}
+
+    Order:
+      type: object
+      additionalProperties: false
+      required: [order_id, partner_id, offer_id, kind, subject, consent, callback_url]
+      properties:
+        order_id: {type: string}
+        partner_id: {type: string}
+        offer_id: {type: string}
+        kind: {type: string, enum: [sell, deliver]}
+        requested_start: {type: string, format: date, description: sell only}
+        subject: {$ref: '#/components/schemas/Subject'}
+        previous_contract:
+          type: object
+          properties:
+            supplier: {type: string}
+            ends: {type: string, format: date}
+            cancellation_by: {type: string, enum: [new_supplier, tenant, centrix]}
+        consent: {$ref: '#/components/schemas/Consent'}
+        callback_url: {type: string, format: uri}
+
+    Status:
+      type: string
+      enum: [submitted, received, needs_input, confirmed, scheduled, in_progress, active, completed, needs_followup, rejected, cancelled]
+
+    StatusUpdate:
+      type: object
+      additionalProperties: false
+      required: [order_id, status, at]
+      properties:
+        order_id: {type: string}
+        status: {$ref: '#/components/schemas/Status'}
+        at: {type: string, format: date-time}
+        slot: {$ref: '#/components/schemas/Window'}
+        needs:
+          type: array
+          description: For needs_input — fields centrix must collect from the person
+          items: {$ref: '#/components/schemas/CatalogueField'}
+        reason: {type: string, description: For rejected / cancelled}
+        result:
+          type: object
+          description: Outcome written back to the unit
+          properties:
+            contract_number: {type: string}
+            start: {type: string, format: date}
+            monthly_estimate_eur: {type: number}
+            document_url: {type: string, format: uri}
+            invoice:
+              type: object
+              properties:
+                amount_eur: {type: number}
+                document_url: {type: string, format: uri}
