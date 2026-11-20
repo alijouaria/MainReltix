@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guardian · centrix</title>
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --text: #1d2330; --muted: #637083; --line: #e2e6ec;
+  --accent: #2f6fd6; --accent-text: #ffffff; --ok: #1f8a5b; --warn: #b7791f; --bad: #c0392b;
+  --soft: #eef3fb; --bubble-a: #eef3fb; --bubble-p: #f1f3f5; --code: #f6f8fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3340;
+    --accent: #5b93ec; --accent-text: #0d1117; --ok: #4cc38a; --warn: #e0a84a; --bad: #ef6b5e;
+    --soft: #1f2a3c; --bubble-a: #1f2a3c; --bubble-p: #252b35; --code: #151a21;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 16px;
+  flex-wrap: wrap; padding: 12px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 20px; font-weight: 650; }
+header .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+header .spacer { flex: 1; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 24px 40px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 0; }
+.wide { grid-column: 1 / -1; }
+@media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 16px; } }
+h2 { margin: 0 0 4px; font-size: 17px; }
+h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.sub { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+.next { background: var(--soft); border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-weight: 550; }
+.next:empty { display: none; }
+button, select { font: inherit; border-radius: 8px; padding: 7px 14px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.msg { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--soft); border-radius: 0 8px 8px 0; margin: 8px 0; }
+.msg small { display: block; color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 28px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+dt { color: var(--muted); } dd { margin: 0; }
+.risk { font-size: 28px; font-weight: 700; color: var(--warn); }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--accent); }
+.cause { display: grid; grid-template-columns: 1fr 120px 40px; gap: 8px; align-items: center; font-size: 14px; }
+.secondary { color: var(--muted); font-size: 14px; margin-top: 6px; }
+.stepper { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0 4px; padding: 0; list-style: none; }
+.stepper li { flex: 1; min-width: 90px; text-align: center; font-size: 13px; padding: 6px 4px;
+  border-radius: 6px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.stepper li.done { color: var(--ok); border-color: var(--ok); }
+.stepper li.cur { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.side { color: var(--warn); font-size: 14px; font-weight: 600; }
+ol.timeline { list-style: none; padding: 0; margin: 0; max-height: 280px; overflow: auto; font-size: 14px; }
+ol.timeline li { padding: 4px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 52px 80px 1fr; gap: 8px; }
+ol.timeline .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+ol.timeline .a { color: var(--muted); }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto;
+  font-size: 13px; max-height: 360px; margin: 0; }
+.chat { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; padding: 4px 0; }
+.bubble { max-width: 85%; padding: 7px 11px; border-radius: 12px; font-size: 14px; }
+.bubble.agent { align-self: flex-end; background: var(--bubble-a); border-bottom-right-radius: 3px; }
+.bubble.partner { align-self: flex-start; background: var(--bubble-p); border-bottom-left-radius: 3px; }
+.bubble small { display: block; color: var(--muted); font-size: 12px; }
+.callhead { font-size: 12px; color: var(--muted); text-align: center; margin-top: 6px; }
+.empty { color: var(--muted); font-style: italic; font-size: 14px; }
+table.est { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.est td { padding: 3px 0; border-bottom: 1px solid var(--line); }
+table.est td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+table.est tr.total td { font-weight: 700; border-bottom: 0; }
+.err { color: var(--bad); font-size: 14px; min-height: 1em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Guardian · centrix</h1>
+  <span class="clock" id="clock">-</span>
+  <span class="spacer"></span>
+  <span class="err" id="err"></span>
+  <button class="primary" id="advance">Advance</button>
+  <button id="reset">Reset demo</button>
+</header>
+
+<main>
+  <section class="panel wide" id="centrix">
+    <h2>centrix · unit record</h2>
+    <p class="sub">What Guardian reads from and writes back to the unit in centrix.</p>
+    <div class="next" id="c-next"></div>
+    <ul class="stepper" id="stepper"></ul>
+    <div id="c-side"></div>
+    <div class="cols">
+      <div><h3>Unit</h3><dl id="unit"></dl></div>
+      <div><h3>Alert</h3><div id="alert"><p class="empty">No alert yet. Press Advance to run detection.</p></div></div>
+      <div><h3>Likely causes</h3><div id="causes"><p class="empty">-</p></div></div>
+    </div>
+    <h3>Case timeline</h3>
+    <ol class="timeline" id="timeline"><li class="empty">No events yet.</li></ol>
+    <div id="writeback-wrap" hidden>
+      <h3>Write-back to centrix</h3>
+      <pre id="writeback"></pre>
+    </div>
+  </section>
+
+  <section class="panel" id="tenant">
+    <h2>Tenant portal · unit 2a</h2>
+    <p class="sub">Messages the tenant sees in the centrix portal.</p>
+    <div class="next" id="t-next"></div>
+    <div id="t-msgs"><p class="empty">No messages.</p></div>
+    <div class="row">
+      <button class="primary" id="t-yes">Yes, it's cold</button>
+      <button id="t-no">No, all fine</button>
+    </div>
+    <div class="row">
+      <select id="t-slot" aria-label="New appointment window"></select>
+      <button id="t-resched">Reschedule</button>
+    </div>
+  </section>
+
+  <section class="panel" id="landlord">
+    <h2>Landlord · one-click approval</h2>
+    <p class="sub">Approval link sent to the owner.</p>
+    <div class="next" id="l-next"></div>
+    <div id="l-msg"><p class="empty">No approval requested.</p></div>
+    <div id="l-est"></div>
+    <div class="row">
+      <button class="primary" id="l-approve">Approve</button>
+      <button class="danger" id="l-reject">Reject</button>
+    </div>
+  </section>
+
+  <section class="panel" id="partner">
+    <h2>Partner call</h2>
+    <p class="sub">Guardian phones heating partners and books the job.</p>
+    <div class="next" id="p-next"></div>
+    <div class="chat" id="chat"><p class="empty">No calls yet.</p></div>
+    <h3>Job card (connector fields)</h3>
+    <div id="job"><p class="empty">No job yet.</p></div>
+  </section>
+</main>
+
+<script>
+const STEPS = [
+  ["detected", "Detected"], ["awaiting_tenant", "Tenant"], ["awaiting_landlord", "Landlord"],
+  ["booking", "Booking"], ["scheduled", "Scheduled"], ["completed", "Completed"]];
+const STEP_OF = { in_progress: "scheduled" };
+const SIDE = { on_hold: "On hold", needs_pm: "Needs property manager", closed_no_action: "Closed, no action" };
+const $ = (id) => document.getElementById(id);
+let S = null;
+let live = [];          // call_line events received since the last state refresh
+let busy = false;
+
+const parse = (s) => { try { return typeof s === "string" ? JSON.parse(s || "{}") : (s || {}); } catch { return {}; } };
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "-";
+const hhmm = (iso) => iso ? iso.slice(11, 16) : "";
+const pct = (x) => Math.round((x || 0) * 100) + "%";
+const human = (s) => String(s || "").replace(/_/g, " ");
+const eur = (n) => "€" + Number(n || 0).toFixed(0);
+
+async function api(path, body) {
+  $("err").textContent = "";
+  const r = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+async function act(fn) {
+  if (busy) return;
+  busy = true; render();
+  try { await fn(); } catch (e) { $("err").textContent = e.message; }
+  busy = false;
+  await refresh();
+}
+
+async function refresh() {
+  try { S = await api("/api/state"); live = []; render(); }
+  catch (e) { $("err").textContent = "Cannot reach Guardian: " + e.message; }
+}
+
+function currentCase() {
+  if (!S || !S.cases.length) return null;
+  const c = S.cases[S.cases.length - 1];
+  return { ...c, payload: parse(c.payload) };
+}
+
+function render() {
+  if (!S) return;
+  const c = currentCase();
+  const status = c ? c.status : "none";
+  $("clock").textContent = "Demo clock: " + fmtTime(S.clock);
+  renderCentrix(c);
+  renderTenant(c);
+  renderLandlord(c);
+  renderPartner(c);
+  $("advance").disabled = busy || !["none", "booking", "scheduled", "in_progress"].includes(status) || (status === "none" && S.alerts.length > 0);
+  $("reset").disabled = busy;
+}
+
+function renderCentrix(c) {
+  const unit = S.units.find((u) => u.id === "2a") || {};
+  const b = S.building || {};
+  const boiler = c && c.payload.data_shared ? c.payload.data_shared.boiler_model : null;
+  $("unit").innerHTML = [
+    ["Address", `${b.address}, ${b.city}`], ["Unit", `${unit.id} · floor ${unit.floor} · ${unit.sqm} m² · ${unit.rooms} rooms`],
+    ["Heating", b.heating_type + (boiler ? ` · ${boiler}` : "")], ["Energy class", `${b.energy_class} (built ${b.year_built})`]
+  ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+
+  const alerts = S.alerts.map((a) => ({ ...a, p: parse(a.payload) }));
+  const main = alerts.find((a) => a.unit_id === "2a");
+  const others = alerts.filter((a) => a !== main);
+  if (main) {
+    const ev = main.p.evidence || {};
+    $("alert").innerHTML = `<div class="risk">${pct(main.risk)} risk</div>
+      <div>${esc(human(main.kind))} · ${esc(main.status)}</div>
+      <dl style="margin-top:6px"><dt>Heat use vs neighbours</dt><dd>${pct(ev.ratio_vs_neighbours)} (${pct(1 - ev.ratio_vs_neighbours)} below)</dd>
+      <dt>Window</dt><dd>${esc(ev.window_days)} days</dd><dt>Frost in</dt><dd>${esc(ev.frost_in_days)} days</dd></dl>` +
+      others.map((a) => `<div class="secondary">Also: building ${esc(human(a.kind))}, ${pct(a.risk)} risk` +
+        (a.p.evidence && a.p.evidence.ratio ? ` (burner starts ×${a.p.evidence.ratio})` : "") + `</div>`).join("");
+    $("causes").innerHTML = (main.p.likely_causes || []).map((x) =>
+      `<div class="cause"><span>${esc(human(x.cause))}</span><div class="bar"><span style="width:${pct(x.p)}"></span></div><span>${pct(x.p)}</span></div>`).join("");
+  } else {
+    $("alert").innerHTML = '<p class="empty">No alert yet. Press Advance to run detection.</p>';
+    $("causes").innerHTML = '<p class="empty">-</p>';
+  }
+
+  const status = c ? (STEP_OF[c.status] || c.status) : null;
+  const idx = STEPS.findIndex(([k]) => k === status);
+  const lastIdx = c ? Math.max(idx, ...c.events.map((e) => STEPS.findIndex(([k]) => k === (STEP_OF[parse(e.payload).status] || parse(e.payload).status)))) : -1;
+  $("stepper").innerHTML = STEPS.map(([k, label], i) =>
+    `<li class="${i === idx ? "cur" : i < (idx >= 0 ? idx : lastIdx + 1) ? "done" : ""}">${label}</li>`).join("");
+  $("c-side").innerHTML = c && SIDE[c.status] ? `<div class="side">${SIDE[c.status]}</div>` : "";
+
+  const events = c ? c.events : [];
+  $("timeline").innerHTML = events.length ? events.map((e) => {
+    const p = parse(e.payload);
+    let text = human(e.kind);
+    if (e.kind === "status") text = "status → " + human(p.status) + (p.rung ? ` (${human(p.rung)})` : "");
+    else if (e.kind === "alert_explanation") text = p.text;
+    else if (e.kind === "tenant_answer") text = "tenant answered " + p.answer;
+    else if (e.kind === "landlord_decision") text = p.approve ? "landlord approved" : "landlord rejected";
+    else if (e.kind === "centrix_write_result") text = "result written to centrix unit record";
+    return `<li><span class="t">${hhmm(e.at)}</span><span class="a">${esc(e.actor)}</span><span>${esc(text)}</span></li>`;
+  }).join("") : '<li class="empty">No events yet.</li>';
+
+  const wb = events.find((e) => e.kind === "centrix_write_result");
+  $("writeback-wrap").hidden = !wb;
+  if (wb) $("writeback").textContent = JSON.stringify(parse(wb.payload), null, 2);
+
+  const next = {
+    none: S.alerts.length ? "Detection ran, no unit case opened." : "Press Advance to run the nightly detection.",
+    awaiting_tenant: "Waiting for the tenant to answer the check-in.",
+    awaiting_landlord: "Waiting for the landlord to approve the estimate.",
+    booking: "Approved. Press Advance to call partners and book.",
+    scheduled: "Booked. Tenant may reschedule; press Advance to jump to the visit.",
+    in_progress: "Technician on site. Press Advance for the outcome call.",
+    completed: "Done. Result written back to centrix.",
+  };
+  $("c-next").textContent = next[c ? c.status : "none"] || (SIDE[c.status] + ". Reset to replay.");
+}
+
+function msgsFor(role) {
+  // centrix channels: tenant via portal, owner via email
+  return S.messages.filter((m) => m.unit_id === "2a" && m.channel === (role === "tenant" ? "portal" : "email"));
+}
+
+function renderTenant(c) {
+  const msgs = msgsFor("tenant");
+  $("t-msgs").innerHTML = msgs.length ? msgs.map((m) =>
+    `<div class="msg">${esc(m.body)}<small>${fmtTime(m.created_at)}</small></div>`).join("") : '<p class="empty">No messages.</p>';
+  const st = c && c.status;
+  $("t-yes").disabled = $("t-no").disabled = busy || st !== "awaiting_tenant";
+  const job = c && c.payload.job_id ? S.jobs.find((j) => j.id === c.payload.job_id) : null;
+  const windows = job ? (parse(job.payload).access_windows || []) : [];
+  const cur = job && job.scheduled_at;
+  const sel = $("t-slot"), prev = sel.value;
+  sel.innerHTML = windows.filter((w) => w.start !== cur && new Date(w.start) > new Date(S.clock))
+    .map((w) => `<option value="${esc(w.start)}">${esc(fmtTime(w.start))} – ${esc(hhmm(w.end))}</option>`).join("")
+    || "<option value=''>No other windows</option>";
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  const can = st === "scheduled" && sel.value;
+  sel.disabled = busy || st !== "scheduled";
+  $("t-resched").disabled = busy || !can;
+  $("t-next").textContent = st === "awaiting_tenant" ? "Answer the check-in: is the radiator cold?"
+    : st === "scheduled" ? `Visit booked for ${fmtTime(cur)}. Reschedule if it doesn't suit.` : "";
+}
+
+function renderLandlord(c) {
+  const ap = c ? S.approvals.filter((a) => a.case_id === c.id).pop() : null;
+  const msg = msgsFor("owner").filter((m) => (parse(m.payload).actions || []).includes("approve")).pop();
+  const summary = msgsFor("owner").filter((m) => !(parse(m.payload).actions || []).length).pop();
+  $("l-msg").innerHTML = (msg ? `<div class="msg">${esc(msg.body)}<small>${fmtTime(msg.created_at)}</small></div>` : '<p class="empty">No approval requested.</p>')
+    + (summary ? `<div class="msg">${esc(summary.body)}<small>Case summary</small></div>` : "");
+  if (ap) {
+    const p = parse(ap.payload), e = p.estimate || {};
+    $("l-est").innerHTML = `<h3>Estimate · ${esc(p.craftsman)}</h3><table class="est">
+      <tr><td>Call-out</td><td>${eur(e.callout)}</td></tr>
+      <tr><td>Labour (${esc(e.labour_hours)} h)</td><td>${eur(e.labour)}</td></tr>
+      <tr><td>Parts</td><td>${eur(e.parts)}</td></tr>
+      <tr class="total"><td>Total</td><td>${eur(e.total)}</td></tr></table>
+      <div class="secondary">Status: ${esc(ap.status)}</div>`;
+  } else $("l-est").innerHTML = "";
+  const pending = c && c.status === "awaiting_landlord";
+  $("l-approve").disabled = $("l-reject").disabled = busy || !pending;
+  $("l-next").textContent = pending ? `Approve ${eur(ap && ap.amount_eur)} for the repair?` : "";
+}
+
+function bubble(l) {
+  const who = l.speaker === "agent" ? "agent" : "partner";
+  return `<div class="bubble ${who}"><small>${who === "agent" ? "Guardian" : "Partner"}</small>${esc(l.text)}</div>`;
+}
+
+function renderPartner(c) {
+  const calls = S.messages.filter((m) => m.channel === "voice").map((m) => ({ m, p: parse(m.payload) }));
+  let html = calls.map(({ m, p }) => `<div class="callhead">${esc(m.body)} · ${p.result && (p.result.accepted === false) ? "declined" : "done"}</div>`
+    + (p.transcript || []).map(bubble).join("")).join("");
+  if (live.length) html += `<div class="callhead">Call in progress…</div>` + live.map(bubble).join("");
+  const chat = $("chat");
+  chat.innerHTML = html || '<p class="empty">No calls yet.</p>';
+  chat.scrollTop = chat.scrollHeight;
+
+  const job = c && c.payload.job_id ? S.jobs.find((j) => j.id === c.payload.job_id) : null;
+  if (job) {
+    const p = parse(job.payload);
+    const rows = [["Job", `#${job.id} · ${human(p.job_type)}`], ["Status", job.status], ["Slot", fmtTime(job.scheduled_at)],
+      ["Partner", c.payload.craftsman ? c.payload.craftsman.name : p.partner_id], ["Unit", `${p.unit.unit_id}, floor ${p.unit.floor}`],
+      ["Address", p.unit.address], ["Boiler", p.boiler_model], ["Evidence", p.evidence_summary],
+      ["Consent", (p.consent_scope || []).map(human).join(", ")]];
+    $("job").innerHTML = `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
+  } else $("job").innerHTML = '<p class="empty">No job yet.</p>';
+  const st = c && c.status;
+  $("p-next").textContent = live.length ? "Calling…" : st === "booking" ? "Press Advance to start calling partners."
+    : st === "scheduled" ? "Press Advance for the post-visit outcome call." : "";
+}
+
+$("advance").onclick = () => act(() => api("/api/advance", {}));
+$("reset").onclick = () => act(() => api("/api/reset", {}));
+$("t-yes").onclick = () => act(() => api(`/api/tenant/${currentCase().id}/answer`, { answer: "yes" }));
+$("t-no").onclick = () => act(() => api(`/api/tenant/${currentCase().id}/answer`, { answer: "no" }));
+$("l-approve").onclick = () => act(() => api(`/api/landlord/${currentCase().id}/decision`, { approve: true }));
+$("l-reject").onclick = () => act(() => api(`/api/landlord/${currentCase().id}/decision`, { approve: false }));
+$("t-resched").onclick = () => act(async () => {
+  const r = await api(`/api/tenant/${currentCase().id}/reschedule`, { slot: $("t-slot").value });
+  if (r.ok === false) $("err").textContent = "Slot rejected; tenant offered valid windows.";
+});
+
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onmessage = (msg) => {
+    const ev = parse(msg.data);
+    if (ev.type === "call_line") { live.push(ev); if (S) renderPartner(currentCase()); return; }
+    if (!busy) refresh();
+  };
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+refresh();
+connect();
+</script>
+</body>
+</html>

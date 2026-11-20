@@ -34,3 +34,8 @@ def test_api_flow_and_webhook(client):
     assert w.status_code == 202
     assert client.post("/api/reset").status_code == 200
     assert client.get("/api/state").json()["cases"] == []
+
+
+def test_index_served(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "Guardian" in r.text
