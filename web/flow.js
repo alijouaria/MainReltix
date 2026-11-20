@@ -15,12 +15,13 @@ const call = {
   status: "idle",        // idle | connecting | connected | ended
   mode: "listening",     // speaking | listening
   transcript: [],        // { who: "Mia" | "You", text }
+  issueId: null,
   sessionId: null,
   eventNumber: 0,
   pendingEvent: null,
   recovery: null,
 };
-const resident = { declined: false, consent: false, busy: false, error: "" };
+const resident = { declined: false, consent: false, busy: false, error: "", submissionId: null, selectedVersion: null };
 const complaintFormAttempt = { sessionId: null, eventId: null, text: null };
 
 /* ---------- small helpers ---------- */
@@ -28,7 +29,7 @@ const complaintFormAttempt = { sessionId: null, eventId: null, text: null };
 const post = async (path, body) => {
   const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) { const error = new Error(data.error || `Request failed (${res.status})`); error.payload = data; throw error; }
   return data;
 };
 const logEvent = (type, text, channel = "voice") => post("/api/events", { type, text, channel, unit_id: UNIT }).catch(() => {});
@@ -41,7 +42,7 @@ const offers = () => state.partner?.offers || [];
 const latestOrder = () => (state.orders || []).slice(-1)[0] || null;
 const firstName = () => (state.unit?.tenant?.name || "there").split(" ")[0];
 const currentContract = () => (state.unit?.contracts || []).find((c) => c.type === "energy_supply" && c.status !== "signed") || energyContract();
-const pickedOffer = () => offers()[chosenOffer] || null;
+const pickedOffer = () => offers().find((offer) => offer.offer_id === chosenOfferId) || null;
 const SHARED_FIELDS = ["my name", "address", "meter number", "switch reading", "and start date"];
 
 /* Resident-initiated complaint call. Contract decisions are made in the portal. */
@@ -52,6 +53,7 @@ const clientTools = {
 
 // Problem reports (resident calls Mia): one ticket per call, later details and "urgent" update the same ticket.
 async function reportIssue({ text = "", urgent = false, reason = "" }) {
+  call.sessionId ||= newComplaintId();
   const normalized = JSON.stringify([text, urgent, reason]);
   if (!call.pendingEvent || call.pendingEvent.payload !== normalized) {
     call.pendingEvent = { payload: normalized, id: `${call.sessionId}-${++call.eventNumber}` };
@@ -81,9 +83,11 @@ async function recoverDroppedCall() {
 }
 
 function complaintFormIds(text) {
-  if (!complaintFormAttempt.sessionId || complaintFormAttempt.text !== text) {
+  if (!complaintFormAttempt.sessionId) {
     complaintFormAttempt.sessionId = newComplaintId();
-    complaintFormAttempt.eventId = `${complaintFormAttempt.sessionId}-1`;
+  }
+  if (complaintFormAttempt.text !== text) {
+    complaintFormAttempt.eventId = `${complaintFormAttempt.sessionId}-${newComplaintId()}`;
     complaintFormAttempt.text = text;
   }
   return { sessionId: complaintFormAttempt.sessionId, eventId: complaintFormAttempt.eventId };
@@ -162,7 +166,8 @@ function renderCall() {
 
 function renderComplaintRecovery() {
   const box = document.getElementById("complaint-recovery");
-  if (!box || !call.recovery) return;
+  if (!box) return;
+  if (!call.recovery) { box.innerHTML = ""; return; }
   if (call.recovery.state === "saved") {
     const issue = call.recovery.issue;
     box.innerHTML = `<div class="reading-summary" role="status"><strong>Saved complaint ${esc(issue.issue_id)}</strong><p>${esc(issue.text)}</p><span>Sent to the ${issue.owner === "partner" ? "supplier" : "property team"}.</span></div>`;
@@ -215,6 +220,7 @@ setInterval(() => { const t = document.getElementById("phone-timer"); if (t && c
 const RESIDENT_STEPS = [
   ["submitted", "Signed and sent"],
   ["received", "Supplier accepted"],
+  ["pending", "Supplier checking"],
   ["confirmed", "Contract confirmed"],
   ["active", "New supply running"],
 ];
@@ -225,6 +231,7 @@ function renderIssues() {
   const shareable = order && !["rejected", "cancelled"].includes(order.status);
   const shareOption = document.getElementById("share-option");
   if (shareOption) { shareOption.hidden = !shareable; shareOption.querySelector("input").disabled = !shareable; }
+  renderComplaintRecovery();
   for (const [id, audience] of [["issue-list", "tenant"], ["staff-issues", "reltix"], ["partner-issues", "partner"]]) {
     const box = document.getElementById(id);
     if (!box) continue;
@@ -254,9 +261,10 @@ function renderDecision() {
   if (!box || !state.unit) return;
   const order = latestOrder();
   const contract = currentContract();
-  byId("renewal-options").hidden = !state.offer_available || Boolean(order && order.status !== "rejected");
+  const terminal = order && ["rejected", "cancelled"].includes(order.status);
+  byId("renewal-options").hidden = !state.offer_available || Boolean(order && !terminal);
 
-  if (order && order.status !== "rejected") {
+  if (order && !terminal) {
     const reached = new Set(order.status_history.map((s) => s.status));
     const result = order.status_history.find((s) => s.result)?.result;
     const steps = RESIDENT_STEPS.map(([key, label]) => `<li class="${reached.has(key) ? "done" : ""}">${reached.has(key) ? "✓" : "○"} ${esc(label)}</li>`).join("");
@@ -264,18 +272,26 @@ function renderDecision() {
     const boundary = new Date(order.requested_start + "T00:00:00Z");
     boundary.setUTCDate(boundary.getUTCDate() - 1);
     const readDate = boundary.toISOString().slice(0, 10);
-    const needs = readingNeeded ? `<p class="notice notice-amber">Enter the switch reading from ${esc(prettyDate(readDate))} below. It will be passed to the supplier.</p>` : "";
+    const needs = readingNeeded ? `<p class="notice notice-amber">Enter the reading taken on ${esc(prettyDate(readDate))} below. It will be passed to the supplier.</p>` : "";
+    const unconfirmed = order.start_unconfirmed ? `<p class="notice notice-amber">The supplier hasn’t confirmed whether supply started. The property team is following up.</p>` : "";
+    const mismatch = order.start_date_mismatch ? `<p class="notice notice-amber">The supplier proposed ${esc(prettyDate(order.start_date_mismatch.proposed))}, but the requested start is ${esc(prettyDate(order.start_date_mismatch.requested))}. Neither date is confirmed yet.</p>` : "";
+    const meterNumberNeeded = !order.meter_number ? `<p class="notice notice-amber">Add the meter number to continue this handover.</p>` : "";
     const done = result
       ? `<p class="notice">Your new contract ${esc(result.contract_number)} starts on ${esc(prettyDate(result.start))}.</p>` : "";
     const last = order.status_history.at(-1);
     const pending = last?.status === "pending" ? '<p class="notice">The supplier is still checking the start date.</p>' : "";
     const reading = order.switch_reading;
     const sent = reading?.value_kwh != null ? `<p class="muted small">Switch reading sent · ${esc(reading.value_kwh)} kWh · ${esc(prettyDate(reading.read_at))}</p>` : "";
-    box.innerHTML = `<div class="decision-box"><div class="section-label"><span>${esc(order.product)} · your switch</span><span class="count-label">${esc(order.order_id)}</span></div><ul class="step-list">${steps}</ul>${pending}${needs}${done}${sent}</div>`;
+    box.innerHTML = `<div class="decision-box"><div class="section-label"><span>${esc(order.product)} · your switch</span><span class="count-label">${esc(order.order_id)}</span></div><ul class="step-list">${steps}</ul>${pending}${unconfirmed}${mismatch}${needs}${meterNumberNeeded}${done}${sent}</div>`;
     if (readingNeeded) { byId("reading-fold").open = true; byId("reading-date").value = readDate; }
+    if (!order.meter_number) byId("reading-fold").open = true;
     return;
   }
-  if (!state.offer_available) { box.innerHTML = '<p class="muted small">No renewal offer is due for this flat.</p>'; return; }
+  if (!state.offer_available) {
+    const followup = order?.status === "cancelled" || order?.status === "rejected";
+    box.innerHTML = `<p class="muted small">${followup ? "No eligible replacement offer is available. The property team will handle the case." : "No renewal offer is due for this flat."}</p>`;
+    return;
+  }
 
   if (resident.declined) {
     box.innerHTML = `<div class="decision-box"><p><strong>You’re keeping ${esc(contract.supplier)}.</strong> Nothing was shared with any supplier.</p><button class="text-button" type="button" data-decide="undo">Changed your mind? Review the offers</button></div>`;
@@ -284,7 +300,8 @@ function renderDecision() {
 
   const offer = pickedOffer();
   const rejected = order?.status === "rejected"
-    ? `<p class="notice notice-amber">${esc(order.partner)} couldn’t take your last order${order.status_history.slice(-1)[0].note ? ` (${esc(order.status_history.slice(-1)[0].note)})` : ""}. Pick another plan below. Nothing else was shared.</p>` : "";
+    ? `<p class="notice notice-amber">${esc(order.partner)} declined the order. Choose an eligible plan below; each new order needs your consent.</p>`
+    : order?.status === "cancelled" ? `<p class="notice notice-amber">The supplier cancelled the confirmed order. Review another plan and give consent before placing a replacement.</p>` : "";
   const saving = offer && contract.current_monthly_price_eur ? contract.current_monthly_price_eur - offer.estimated_monthly_price_eur : 0;
   box.innerHTML = `
     <div class="decision-box">
@@ -292,7 +309,7 @@ function renderDecision() {
       ${offer ? `<p class="saving">${saving > 0 ? `You save about <b>${money(saving)}</b> a month (${money(saving * 12)} a year) compared with today.` : `This plan costs ${money(-saving)} more per month than today.`}</p>` : `<p class="muted small">Pick a plan above to continue.</p>`}
       <label class="consent">
         <input type="checkbox" id="consent-box" ${resident.consent ? "checked" : ""} ${offer ? "" : "disabled"}>
-        <span>I agree to share ${SHARED_FIELDS.join(", ")} with ${esc(state.partner.partner)} for this demo order.</span>
+        <span>I agree to share ${SHARED_FIELDS.join(", ")} and the reviewed terms for ${esc(offer?.product || "this plan")} at ${money(offer?.estimated_monthly_price_eur)}/month for ${Number(offer?.contract_months || 0)} months with ${esc(state.partner.partner)}.</span>
       </label>
       <div class="decision-actions">
         <button class="button button-primary" type="button" data-decide="sign" ${offer && resident.consent && !resident.busy ? "" : "disabled"}>${resident.busy ? "Sending…" : "Confirm & sign"}</button>
@@ -305,15 +322,45 @@ function renderDecision() {
 async function sign() {
   const offer = pickedOffer();
   if (!offer) return;
+  resident.submissionId ||= crypto.randomUUID();
   resident.busy = true; resident.error = ""; render();
   try {
-    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
+    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, offer_version: offer.offer_version,
+      submission_id: resident.submissionId, consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
     resident.consent = false;
+    resident.submissionId = null;
   } catch (error) {
     resident.error = error.message;
+    if (error.payload?.stale_offer) {
+      resident.consent = false;
+      resident.submissionId = null;
+      chosenOfferVersion = null;
+      await refreshState();
+    }
   }
   resident.busy = false;
   await refreshState();
+}
+
+function chooseOffer(id, version) {
+  syncedChoice = id;
+  resident.consent = false;
+  resident.error = "";
+  resident.selectedVersion = version;
+  renderDecision();
+  if (id) post("/api/case", { unit_id: UNIT, chosen_offer_id: id, source: "portal" }).then(refreshState).catch(() => {});
+}
+
+function syncOfferVersion() {
+  if (!chosenOfferId) return;
+  const offer = offers().find((item) => item.offer_id === chosenOfferId);
+  if (!offer) return;
+  if (chosenOfferVersion && chosenOfferVersion !== offer.offer_version) {
+    resident.consent = false;
+    resident.error = "The plan terms changed. Review the revised price and give consent again.";
+  }
+  chosenOfferVersion = offer.offer_version;
+  resident.selectedVersion = offer.offer_version;
 }
 
 /* ---------- 3. partner inbox ---------- */
@@ -329,11 +376,13 @@ const CALL_LINES = {
 const PARTNER_ANSWERS = {
   submitted: [["received", "Yes, I’ll take it", "button-primary"], ["pending", "Still checking", ""], ["rejected", "No, decline", ""]],
   received: [["confirmed", "Confirm start date", "button-primary"], ["pending", "Still checking", ""], ["needs_input", "I need the meter reading", ""]],
-  confirmed: [["active", "Start day: power is running", "button-primary"]],
+  pending: [["confirmed", "Confirm start date", "button-primary"], ["received", "Order is progressing", ""], ["rejected", "No, decline", ""]],
+  confirmed: [["active", "Start day: power is running", "button-primary"], ["cancelled", "Cancel before activation", ""]],
 };
 const STATUS_TEXT = {
   submitted: "Customer chose your plan", received: "You accepted the order", needs_input: "You asked for the meter reading",
   confirmed: "You confirmed the contract", pending: "Checking start date", active: "Supply started", rejected: "You declined the order", cancelled: "Order cancelled",
+  start_date_mismatch: "Supplier proposed a different start date",
 };
 
 function renderPartner() {
@@ -349,7 +398,7 @@ function renderPartner() {
     byId("order-id-label").textContent = "";
     return;
   }
-  const titles = { submitted: "Incoming supplier call", received: "Confirm the start date", needs_input: "Waiting for a reading",
+  const titles = { submitted: "Incoming supplier call", received: "Confirm the start date", pending: "Supplier checking the start date", needs_input: "Waiting for a reading",
     confirmed: "Start date confirmed", active: "Handover complete", rejected: "Order declined", cancelled: "Order cancelled" };
   byId("company-title").textContent = titles[order.status] || "Supplier order";
   byId("partner-lead").innerHTML = `Simulated supplier call · <strong id="partner-name">${esc(order.partner)}</strong>`;
@@ -359,14 +408,32 @@ function renderPartner() {
     ["Address", order.subject.address],
     ["Plan", `${order.product} · ${money(order.estimated_monthly_price_eur)}/month`],
     ["Start", prettyDate(order.requested_start)],
-    ["Meter", `${order.subject.meter.number} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : "reading on the switch date"}`],
+    ["Meter", `${order.subject.meter.number || "number needed"} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : "reading on the switch date"}`],
     ["Old contract", `${order.previous_contract.supplier}, ends ${prettyDate(order.previous_contract.ends)} · you cancel it`],
     ["Consent", `${order.consent.channel} · ${new Date(order.consent.given_at).toLocaleString("en-GB")}`],
   ];
+  if (order.start_date_mismatch) {
+    rows.push(["Start date mismatch", `Requested ${prettyDate(order.start_date_mismatch.requested)} · supplier proposed ${prettyDate(order.start_date_mismatch.proposed)} · neither confirmed`]);
+  }
   byId("order-card").innerHTML = `<div class="detail-list order-details">${rows.map(([k, v]) => `<div class="detail-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div>`;
   byId("call-script").innerHTML = (CALL_LINES[order.status] || (() => []))(order).map((line) => `<div class="call-line"><b>Assistant</b> ${esc(line)}</div>`).join("");
-  byId("partner-actions").innerHTML = (PARTNER_ANSWERS[order.status] || [])
+  if (order.start_date_mismatch) {
+    byId("call-script").insertAdjacentHTML("beforeend", `<div class="notice notice-amber">Start date mismatch: requested ${esc(prettyDate(order.start_date_mismatch.requested))}; supplier proposed ${esc(prettyDate(order.start_date_mismatch.proposed))}. Neither date is confirmed. The supplier can decline this order.</div>`);
+  }
+  const followup = (state.calls || []).find((item) => item.order_id === order.order_id && item.kind === "supplier_follow_up");
+  if (followup && followup.status !== "done") {
+    byId("call-script").insertAdjacentHTML("beforeend", `<div class="notice notice-amber">Supplier follow-up queued · ${esc(prettyDate(followup.due_date))}${followup.owner === "property team" ? " · property team owns the overdue callback" : " · supplier callback"}.</div>`);
+  }
+  const canUpdateStart = ["submitted", "received", "pending"].includes(order.status);
+  const startControls = canUpdateStart ? `<label class="small">Supplier start date<input type="date" id="partner-start-date" value="${esc(order.requested_start)}"></label>
+    <label class="consent"><input type="checkbox" id="partner-supply-started"><span>Supply actually began on this date (required for a past date)</span></label>` : "";
+  const actions = [...(PARTNER_ANSWERS[order.status] || [])];
+  if (order.start_date_mismatch && ["received", "pending"].includes(order.status) && !actions.some(([status]) => status === "rejected")) {
+    actions.push(["rejected", "Decline proposed date", ""]);
+  }
+  byId("partner-actions").innerHTML = actions
     .map(([status, label, cls]) => `<button class="button ${cls}" type="button" data-partner="${status}">${esc(label)}</button>`).join("")
+    + startControls
     + (order.status === "needs_input" ? `<span class="muted small">Waiting for the customer…</span>` : "");
   byId("order-id-label").textContent = order.order_id;
   byId("job-timeline").innerHTML = order.status_history.slice().reverse().map((e) => `
@@ -374,9 +441,13 @@ function renderPartner() {
 }
 
 async function partnerAnswer(status) {
-  const note = status === "needs_input" ? "meter reading" : status === "rejected" ? "not available for this postcode" : "";
+  const order = latestOrder();
+  const note = status === "needs_input" ? "switch reading" : status === "rejected"
+    ? order?.start_date_mismatch ? `Cannot honor requested start ${order.start_date_mismatch.requested}; proposed ${order.start_date_mismatch.proposed}` : "not available for this postcode" : "";
   try {
-    await post(`/api/orders/${latestOrder().order_id}/status`, { status, note });
+    const extra = status === "confirmed" ? { start_date: byId("partner-start-date").value,
+      supply_started: byId("partner-supply-started").checked } : status === "cancelled" ? { note: "cancelled before activation" } : {};
+    await post(`/api/orders/${latestOrder().order_id}/status`, { status, note, ...extra });
   } catch (error) {
     alertInline(error.message);
   }
@@ -424,6 +495,8 @@ const EVENT_TITLES = {
   received: "Partner accepted", needs_input: "Partner needs input", confirmed: "Contract confirmed", rejected: "Partner declined",
   active: "New supply running", filed: "Filed on the unit", cancelled: "Order cancelled", issue: "Problem reported",
   issue_reply: "Complaint answered", issue_shared: "Supplier follow-up requested", pending: "Supplier checking start date",
+  supplier_follow_up: "Supplier callback queued", reading_requested: "Switch reading requested", meter_identifier: "Meter number added",
+  start_date_mismatch: "Supplier proposed a different start date",
 };
 
 function renderManager() {
@@ -442,6 +515,9 @@ function renderManager() {
   const status = byId("landlord-renewal-status");
   if (order?.status === "active") status.textContent = `Switched to ${order.product}`;
   else if (order?.status === "confirmed") status.textContent = `Switching on ${prettyDate(order.requested_start)}`;
+  else if (order?.status === "rejected") status.textContent = "Supplier declined · review alternatives";
+  else if (order?.status === "cancelled") status.textContent = "Order cancelled · supply status needs review";
+  else if (order?.start_unconfirmed) status.textContent = "Start date unconfirmed · callback owned by property team";
   else if (order && order.status !== "rejected") status.textContent = "Partner processing";
   else if (resident.declined || events.some((e) => e.type === "declined")) status.textContent = "Resident keeps contract";
   else status.textContent = "Resident decides";
@@ -470,7 +546,7 @@ function renderManager() {
   const log = state.unit.consent_log || [];
   byId("consent-count").textContent = `${log.length} ${log.length === 1 ? "entry" : "entries"}`;
   byId("consent-log").innerHTML = log.length
-    ? log.map((c) => `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)}</span><strong>${esc(c.partner)}: ${esc(c.data_shared.join(", "))}</strong></div>`).join("")
+    ? log.map((c) => `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)} · ${esc(c.order_id)}</span><strong>${esc(c.recipient || c.partner)}: ${esc((c.approved_fields || c.data_shared || []).join(", "))}</strong></div>`).join("")
     : `<p class="muted small">No personal data has been shared with a partner.</p>`;
 
   const energy = (state.unit.contracts || []).filter((c) => c.type === "energy_supply");
@@ -500,6 +576,7 @@ function renderPortfolio() {
   if (!box || !portfolio) return;
   const run = portfolio.run;
   const calls = portfolio.calls || [];
+  const followups = portfolio.supplier_followups || [];
   const callFor = (uid) => calls.filter((c) => c.unit_id === uid).slice(-1)[0];
   const rows = (run?.results || []).map((r) => {
     const [cls, label] = DECISION[r.decision];
@@ -531,6 +608,7 @@ function renderPortfolio() {
     <div class="panel-head"><h2>Today’s run</h2><span class="muted small">${run ? `${esc(prettyDate(run.date))} · ${new Date(run.ran_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(run.source)}` : ""}</span></div>
     <p class="muted small">Matched residents receive a renewal offer in their portal. Phone calls handle complaints and supplier follow-up.</p>
     ${run ? `<div class="run-table-wrap"><table class="run-table"><thead><tr><th>Flat</th><th>Resident</th><th>Decision</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No run yet.</p>`}
+    ${followups.length ? `<details class="fold"><summary>Supplier callbacks · ${followups.length} open</summary>${followups.map((f) => `<div class="detail-row"><span>${esc(f.unit_id.replace("unit_", "").toUpperCase())} · ${esc(prettyDate(f.due_date))} · ${esc(f.owner === "property team" ? "Property team owns overdue callback" : "Supplier callback queued")}</span><strong><a href="/supplier?unit=${esc(f.unit_id)}">Open supplier workflow</a></strong></div>`).join("")}</details>` : ""}
     <p class="phone-hint small muted">Supplier phone replies are simulated in the energy partner view.</p>`;
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
 }
@@ -552,8 +630,12 @@ function syncFromCase() {
   const c = serverCase();
   if (c.chosen_offer_id && c.chosen_offer_id !== syncedChoice) {
     syncedChoice = c.chosen_offer_id;
-    const index = offers().findIndex((o) => o.offer_id === c.chosen_offer_id);
-    if (index >= 0 && chosenOffer !== index) { chosenOffer = index; renderOffers("tenant-offers", true); }
+    const offer = offers().find((o) => o.offer_id === c.chosen_offer_id);
+    if (offer && chosenOfferId !== offer.offer_id) {
+      chosenOfferId = offer.offer_id;
+      chosenOfferVersion = offer.offer_version;
+      renderOffers("tenant-offers", true);
+    }
   }
   if (typeof c.declined === "boolean") resident.declined = c.declined;
 }
@@ -657,8 +739,10 @@ document.addEventListener("click", async (event) => {
     await endCall();
     Object.assign(call, { status: "idle", transcript: [], issueId: null, error: "", muted: false });
     Object.assign(complaintFormAttempt, { sessionId: null, eventId: null, text: null });
-    Object.assign(resident, { declined: false, consent: false, busy: false, error: "" });
-    chosenOffer = null;
+    Object.assign(resident, { declined: false, consent: false, busy: false, error: "", submissionId: null, selectedVersion: null });
+    chosenOfferId = null;
+    chosenOfferVersion = null;
+    Object.assign(call, { sessionId: null, eventNumber: 0, pendingEvent: null, recovery: null });
     await post("/api/reset");
     await refreshState();
     await loadPortfolio();
@@ -681,6 +765,6 @@ setInterval(() => {
 loadPortfolio();
 if (location.hash === "#complaint-demo" && ROLE === "tenant") byId("complaint-demo").open = true;
 
-window.flow = { render, renderPartner };
+window.flow = { render, renderPartner, chooseOffer, syncOfferVersion };
 render();
 })();

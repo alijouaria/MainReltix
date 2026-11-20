@@ -43,7 +43,8 @@ class ComplaintRecoveryTests(unittest.TestCase):
         order = {"order_id": order_id, "partner_id": partner["partner_id"], "partner": partner["partner"],
                  "subject": {"unit_id": "unit_4b", "meter": {"switch_reading": {"value_kwh": None}}},
                  "previous_contract": {},
-                 "consent": {"given_at": main.now_iso(), "channel": "portal"}, "status": status}
+                 "consent": {"given_at": main.now_iso(), "channel": "portal"}, "status": status,
+                 "status_history": [{"status": status, "at": main.now_iso()}], "requested_start": "2027-01-01"}
         orders = main.read_orders()
         orders.append(order)
         main.write_orders(orders)
@@ -71,8 +72,8 @@ class ComplaintRecoveryTests(unittest.TestCase):
                           shared_order_id=first_order["order_id"])["issue"]
         self.assertEqual(issue["owner"], "partner")
 
-        returned = main.reassign_shared_issues_for_order(first_order, "Supplier declined the order")
-        self.assertEqual(returned, [issue["issue_id"]])
+        self.handler.update_order_status(first_order["order_id"], {"status": "rejected"})
+        self.assertEqual(self.code, 200)
         saved = main.read_json(main.UNIT_FILE)["issues"][0]
         self.assertIsNone(saved["shared_order_id"])
         self.assertEqual(saved["owner"], "property_team")

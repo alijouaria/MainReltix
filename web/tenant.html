@@ -14,7 +14,7 @@
 </head>
 <body data-role="tenant">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Reltix home"><span class="brand-mark">r</span>reltix</a>
+    <a class="brand" href="/" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""></a>
     <span class="role-label">Resident</span>
     <div class="topbar-right"><span class="crumb" id="view-crumb">Tenant portal</span><div class="avatar" role="img" aria-label="Signed-in user">LH</div></div>
   </header>
@@ -89,6 +89,11 @@
           <button class="button" type="submit">Save</button>
         </form>
         <p class="form-message" id="reading-message" role="status"></p>
+        <form id="meter-identifier-form" class="feed-form" hidden>
+          <label><span>Meter number</span><input id="meter-identifier-value" type="text" minlength="5" maxlength="32" autocomplete="off" placeholder="From the label on your meter" required></label>
+          <button class="button" type="submit">Add meter number</button>
+          <p class="form-message" id="meter-identifier-message" role="status"></p>
+        </form>
       </details>
 
       <details class="fold">
