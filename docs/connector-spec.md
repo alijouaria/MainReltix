@@ -203,7 +203,3 @@ To add any new partner:
 6. Pass the contract test suite: valid order accepted, extra field rejected, illegal transition 409, outcome written back to the unit.
 
 No new endpoint and no schema change on the centrix side.
-
-## Reference implementation
-
-`backend/app/connector.py` implements this contract for `deliver` partners (job intake, the transition table, slot-in-window checks, invoice filing, extra-field rejection), with tests in `backend/tests/test_connector.py`. Its status names map to this spec: `offered → submitted`, `accepted → confirmed`, `on_site → in_progress`, `declined → rejected`. The `sell` flow follows the same pattern.
