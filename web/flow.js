@@ -328,7 +328,8 @@ function renderPhone() {
   if (!el.firstChild) el.innerHTML = `<div class="phone-top"></div><div class="phone-lines"></div><div class="phone-bottom"></div>`;
   const set = (sel, html) => { const part = el.querySelector(sel); if (part.dataset.html !== html) { part.dataset.html = html; part.innerHTML = html; } };
   set(".phone-top", `
-      <div class="phone-avatar">M</div>
+      <div class="call-orb" aria-hidden="true"><span class="ring r1"></span><span class="ring r2"></span><span class="sphere"></span></div>
+      <div class="wave" aria-hidden="true">${"<i></i>".repeat(9)}</div>
       <h2>Mia · reltix</h2>
       <p class="phone-sub">${sub}</p>
       <p class="phone-about">${ringingNow ? `About your electricity contract${who ? ` · ${esc(who)}` : ""}` : call.reason === "problem" ? "Reporting a problem · speak normally" : "Speak normally, like on a phone call"}</p>`);
@@ -486,6 +487,35 @@ function alertInline(message) {
   byId("partner-actions").insertAdjacentHTML("beforeend", `<p class="form-message error">${esc(message)}</p>`);
 }
 
+/* ---------- staff: connection flow (centrix core ↔ resident, supplier, landlord) ---------- */
+function renderNetwork() {
+  const box = document.getElementById("network");
+  if (!box || !state.unit) return;
+  const c = serverCase();
+  const order = latestOrder();
+  const lastCall = (state.calls || []).slice(-1)[0];
+  const chosen = offers().find((o) => o.offer_id === c.chosen_offer_id);
+  const tenant = state.unit.tenant?.name || "No resident";
+  const node = (id, title, line, on, tone) => ({ id, title, line, on, tone });
+  const resident = node("resident", tenant, chosen ? `Chose ${chosen.product}` : lastCall ? `Call ${CALL_STATE[lastCall.status] || lastCall.status}` : (state.issues || []).length ? "Reported a problem" : "Waiting", !!(lastCall || chosen || (state.issues || []).length), "cyan");
+  const supplier = node("supplier", state.partner?.partner || "Energy partner", order ? `Order ${order.status.replace("_", " ")}` : "No order yet", !!order, "emerald");
+  const landlord = node("landlord", state.unit.owner?.name || "Landlord", order?.status === "active" ? "New contract filed" : (state.unit.consent_log || []).length ? "Consent on file" : "0 actions needed", order?.status === "active", "amber");
+  const core = { title: "centrix", line: c.updated_at || order ? "Case open" : "Watching" };
+  const html = `
+    <svg class="net-lines" viewBox="0 0 600 300" preserveAspectRatio="none" aria-hidden="true">
+      ${[["resident", 110, 70], ["supplier", 490, 70], ["landlord", 300, 255]].map(([id, x, y]) => {
+        const n = { resident, supplier, landlord }[id];
+        return `<line x1="300" y1="150" x2="${x}" y2="${y}" class="net-line ${n.on ? `on ${n.tone}` : ""}"/>`;
+      }).join("")}
+    </svg>
+    <div class="net-node core"><span class="orb"></span><strong>${core.title}</strong><span>${esc(core.line)}</span></div>
+    ${[resident, supplier, landlord].map((n) => `
+      <div class="net-node ${n.id} ${n.on ? `on ${n.tone}` : ""}"><span class="net-kind">${{ resident: "Resident", supplier: "Supplier", landlord: "Landlord" }[n.id]}</span><strong>${esc(n.title)}</strong><span class="pill3d ${n.on ? n.tone : ""}">${esc(n.line)}</span></div>`).join("")}`;
+  if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+  const sub = document.getElementById("network-sub");
+  if (sub) sub.textContent = `Flat ${UNIT.replace("unit_", "").toUpperCase()}${state.following ? " · following live" : ""}`;
+}
+
 /* ---------- 4. property manager: what happened, consent, contracts ---------- */
 
 const EVENT_TITLES = {
@@ -582,22 +612,28 @@ function renderPortfolio() {
       <td><span class="badge ${cls}">${label}</span> ${callCell}<span class="muted small">${esc(r.reason)}</span></td>
       <td class="small">${links}</td></tr>`;
   }).join("");
-  box.innerHTML = `
-    <div class="run-head">
-      <div><h1>Today’s run</h1><p class="muted small">Every morning centrix checks each flat against the trigger: active contract, tenant opt-in, inside the renewal window, a partner serves the postcode. Matches are called automatically.</p></div>
-      <label class="clock"><span>Demo date</span><input type="date" id="demo-date" value="${esc(portfolio.today)}"></label>
-    </div>
-    ${run ? `<div class="run-stats">
-      <div><strong>${run.scanned}</strong><span>flats checked</span></div>
-      <div><strong>${calls.length}</strong><span>calls placed</span></div>
-      <div><strong>${run.attention}</strong><span>need a person</span></div>
-      <div><strong>${run.scanned - run.matched - run.attention}</strong><span>skipped today</span></div>
-    </div>
-    <p class="muted small">Last run ${esc(prettyDate(run.date))} · ${new Date(run.ran_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(run.source)} · <button class="text-button" type="button" data-run="now">Run again</button></p>
-    <div class="run-table-wrap"><table class="run-table"><thead><tr><th>Flat</th><th>Resident</th><th>Decision</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No run yet.</p>`}
+  const k = portfolio.kpis || {};
+  const tile = (icon, value, label, sub, tone = "") => `<div class="kpi tilt ${tone}"><span class="kpi-icon">${icon}</span><span class="kpi-label">${label}</span><strong>${value}</strong><span class="kpi-sub">${sub}</span></div>`;
+  const kpis = document.getElementById("kpis");
+  if (kpis && run) {
+    const html = [
+      tile("◎", run.scanned, "Flats checked", `${run.matched} matched the trigger today`),
+      tile("☎", calls.length, "Calls by Mia", `${calls.filter((c) => ["answered", "done"].includes(c.status)).length} answered`, "cyan"),
+      tile("✓", k.signed || 0, "Contracts signed", k.monthly_saving_eur ? `€${Math.round(k.monthly_saving_eur * 12)} saved per year` : `${k.active || 0} running`, "emerald"),
+      tile("!", (run.attention || 0) + (k.issues_urgent || 0), "Need a person", `${k.issues_open || 0} problems reported`, "amber"),
+    ].join("");
+    if (kpis.dataset.html !== html) { kpis.dataset.html = html; kpis.innerHTML = html; }
+  }
+  const slot = document.getElementById("clock-slot");
+  if (slot && !slot.querySelector("#demo-date")) slot.innerHTML = `<label class="clock"><span>Demo date</span><input type="date" id="demo-date" value="${esc(portfolio.today)}"></label>`;
+  else if (slot && document.activeElement?.id !== "demo-date") slot.querySelector("#demo-date").value = portfolio.today;
+  const html = `
+    <div class="panel-head"><h2>Today’s run</h2><span class="muted small">${run ? `${esc(prettyDate(run.date))} · ${new Date(run.ran_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(run.source)}` : ""}</span></div>
+    <p class="muted small">Every morning centrix checks each flat: active contract, resident opt-in, inside the renewal window, a partner serves the postcode. Matches are called automatically.</p>
+    ${run ? `<div class="run-table-wrap"><table class="run-table"><thead><tr><th>Flat</th><th>Resident</th><th>Decision</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No run yet.</p>`}
     ${run?.auto_dial ? `<p class="notice ${run.auto_dial.ok ? "" : "notice-amber"}">📞 ${run.auto_dial.ok ? `Mia is phoning the demo number for flat ${esc(run.auto_dial.unit_id.replace("unit_", "").toUpperCase())}.` : esc(run.auto_dial.message)}</p>` : ""}
-    <p class="phone-hint small muted">${portfolio.auto_dial_on ? "Real phone: ON. Each run phones the demo number for the most urgent new match." : portfolio.phone_ready ? "Real phone: on. Use “call phone” to have Mia ring a mobile." : "Calls ring on the resident page. Real phone calls are off (see README to switch them on)."}</p>
-    <h2 class="staff-divider">Case · flat ${esc(UNIT.replace("unit_", "").toUpperCase())}</h2>`;
+    <p class="phone-hint small muted">${portfolio.auto_dial_on ? "Real phone: ON. Each run phones the demo number for the most urgent new match." : portfolio.phone_ready ? "Real phone: on. Use “call phone” to have Mia ring a mobile." : "Calls ring on the resident page. Real phone calls are off (see README to switch them on)."}</p>`;
+  if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
 }
 
 async function phoneCall(callId) {
@@ -636,6 +672,7 @@ function render() {
   renderDecision();
   renderPartner();
   renderManager();
+  renderNetwork();
 }
 
 document.addEventListener("click", async (event) => {

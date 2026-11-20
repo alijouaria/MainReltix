@@ -377,7 +377,19 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/portfolio":
             run = read_json(RUN_FILE) if RUN_FILE.exists() else None
-            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"),
+            orders = read_orders()
+            signed = [o for o in orders if o.get("status") in ("submitted", "received", "needs_input", "confirmed", "active")]
+            saving = 0.0
+            for o in signed:
+                prev = float((o.get("previous_contract") or {}).get("monthly_price_eur") or 0)
+                new = float(o.get("estimated_monthly_price_eur") or 0)
+                if prev and new:
+                    saving += prev - new
+            issues = [i for uid in all_unit_ids() for i in read_json(unit_path(uid)).get("issues", [])]
+            kpis = {"signed": len(signed), "active": sum(o.get("status") == "active" for o in orders),
+                    "monthly_saving_eur": round(saving, 2), "issues_open": len(issues),
+                    "issues_urgent": sum(bool(i.get("urgent")) for i in issues)}
+            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "kpis": kpis,
                                  "phone_ready": phone_ready(), "auto_dial_on": bool(os.environ.get("DEMO_PHONE_NUMBER")) and phone_ready()})
             return
         if path.startswith("/api/orders/"):
@@ -667,7 +679,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                                              else {"value_kwh": None, "note": "sent on the switch date"})},
             },
             "previous_contract": {"contract_id": energy.get("contract_id"), "supplier": energy.get("supplier"),
-                                  "ends": expiry, "cancellation_by": "new_supplier"},
+                                  "ends": expiry, "cancellation_by": "new_supplier",
+                                  "monthly_price_eur": energy.get("current_monthly_price_eur")},
             "consent": {"data_shared": data_shared, "given_at": now_iso(), "channel": channel,
                         "given_by": tenant.get("contact_id"), "signed_name": str(body.get("signed_name", ""))[:100],
                         "conversation": str(body.get("session_id", ""))[:40]},
