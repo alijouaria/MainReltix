@@ -645,3 +645,4 @@ button.kpi:focus-visible { outline: 2px solid var(--accent); }
 .phone-link { display: flex; gap: 6px; }
 .phone-link input { flex: 1; min-width: 0; min-height: 30px; padding: 0 8px; font-size: 0.75rem; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
+.feed li.muted { display: block; cursor: default; }
