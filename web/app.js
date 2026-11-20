@@ -1,6 +1,10 @@
 const state = { unit: null, partner: null };
 const chatHistory = [];
-const byId = (id) => document.getElementById(id);
+// Each role has its own page (tenant.html, landlord.html, partner.html) with only its own elements.
+// Elements that belong to another role's page resolve to a detached placeholder, so shared code is safe.
+const ROLE = document.body.dataset.role;
+const ABSENT = document.createElement("div");
+const byId = (id) => document.getElementById(id) || ABSENT;
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
@@ -185,20 +189,11 @@ function isDirectRecordQuestion(message) {
 }
 
 async function refreshState() {
-  const response = await fetch("/api/state", { cache: "no-store" });
+  const response = await fetch(`/api/state?role=${encodeURIComponent(ROLE)}`, { cache: "no-store" });
   if (!response.ok) throw new Error("Could not load the local demo records.");
   Object.assign(state, await response.json());
   render();
 }
-
-function setRole(role) {
-  document.querySelectorAll(".role-button").forEach((button) => button.classList.toggle("active", button.dataset.role === role));
-  document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${role}-view`));
-  byId("view-crumb").textContent = role === "tenant" ? "SMS + email link" : role === "landlord" ? "Weekly digest" : "Orders";
-  document.querySelector(".topbar-right .avatar").textContent = role === "tenant" ? "LH" : role === "landlord" ? "PM" : "EP";
-}
-
-document.querySelectorAll(".role-button").forEach((button) => button.addEventListener("click", () => setRole(button.dataset.role)));
 
 byId("chat-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -287,7 +282,6 @@ byId("offers-form").addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(result.error || "Could not save the offers.");
     message.textContent = "Saved. Customers now see these plans.";
     await refreshState();
-    setRole("company");
   } catch (error) {
     message.textContent = error.message;
     message.classList.add("error");

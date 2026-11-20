@@ -180,3 +180,10 @@ label span { display: block; margin-bottom: 4px; font-size: 0.85rem; color: var(
 .call-line:last-child { border-bottom: 0; }
 .call-line b { display: inline-block; min-width: 80px; color: var(--muted); font-weight: 600; }
 .call-line.you b { color: var(--accent); }
+
+/* ---------- One page per role ---------- */
+.role-label { font-weight: 600; opacity: .75; }
+.landing { max-width: 720px; margin: 0 auto; }
+.landing-links { display: grid; gap: 12px; margin-top: 20px; }
+.landing-link { display: grid; gap: 4px; padding: 16px 18px; border: 1px solid currentColor; border-radius: 12px; color: inherit; text-decoration: none; opacity: .9; }
+.landing-link:hover, .landing-link:focus-visible { opacity: 1; outline: 2px solid currentColor; outline-offset: 2px; }

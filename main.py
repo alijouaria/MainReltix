@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -21,6 +21,42 @@ HOST = "127.0.0.1"
 PORT = 8765
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:0.5b"
+
+
+ROLE_PAGES = {"/tenant": "tenant.html", "/landlord": "landlord.html", "/partner": "partner.html"}
+
+
+def view_for(role: str, unit: dict, partner: dict) -> dict:
+    """Return only the records a role may see (data minimisation per connector spec)."""
+    contracts = unit.get("contracts", [])
+    energy = next((c for c in contracts if c.get("type") == "energy_supply"), {})
+    if role == "landlord":
+        return {"unit": unit, "partner": partner}
+    if role == "tenant":
+        return {
+            "unit": {
+                "unit_id": unit.get("unit_id"),
+                "property": unit.get("property", {}),
+                "unit": unit.get("unit", {}),
+                "owner": {"name": unit.get("owner", {}).get("name")},
+                "tenant": unit.get("tenant", {}),
+                "contracts": [c for c in contracts if c.get("customer_contact_id", unit.get("tenant", {}).get("contact_id")) == unit.get("tenant", {}).get("contact_id")],
+            },
+            "partner": partner,
+        }
+    if role == "partner":
+        meters = [m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"]
+        return {
+            "unit": {
+                "unit_id": unit.get("unit_id"),
+                "property": {"address": unit.get("property", {}).get("address")},
+                "unit": {"meters": [{"type": m.get("type"), "number": m.get("number"), "switch_reading": m.get("switch_reading")} for m in meters]},
+                "tenant": {"name": unit.get("tenant", {}).get("name")},
+                "contracts": [{"type": "energy_supply", "supplier": energy.get("supplier"), "expiry_date": energy.get("expiry_date")}] if energy else [],
+            },
+            "partner": partner,
+        }
+    raise ValueError("Unknown role. Use tenant, landlord or partner.")
 
 
 def read_json(path: Path) -> dict:
@@ -48,12 +84,17 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
         if path == "/api/state":
-            self.send_json(200, {"unit": read_json(UNIT_FILE), "partner": read_json(OFFERS_FILE)})
+            role = parse_qs(parsed.query).get("role", [""])[0]
+            try:
+                self.send_json(200, view_for(role, read_json(UNIT_FILE), read_json(OFFERS_FILE)))
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
             return
 
-        relative = "index.html" if path == "/" else unquote(path.lstrip("/"))
+        relative = "index.html" if path == "/" else ROLE_PAGES.get(path) or unquote(path.lstrip("/"))
         requested = (WEB_ROOT / relative).resolve()
         if WEB_ROOT.resolve() not in requested.parents and requested != WEB_ROOT.resolve():
             self.send_error(403)
@@ -152,7 +193,8 @@ class DemoHandler(BaseHTTPRequestHandler):
         if not history or history[-1]["role"] != "user":
             raise ValueError("Send a user message first.")
 
-        context = {"unit": read_json(UNIT_FILE), "energy_partner": read_json(OFFERS_FILE)}
+        tenant_view = view_for("tenant", read_json(UNIT_FILE), read_json(OFFERS_FILE))
+        context = {"unit": tenant_view["unit"], "energy_partner": tenant_view["partner"]}
         question = history[-1]["content"]
         direct_answer = self.lookup_answer(question, context)
         if direct_answer:

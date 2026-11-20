@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6faf6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1510" media="(prefers-color-scheme: dark)">
+  <title>Reltix · Property manager</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body data-role="landlord">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Reltix home"><span class="brand-mark">r</span>reltix</a>
+    <span class="role-label">Property manager</span>
+    <div class="topbar-right"><span class="crumb" id="view-crumb">Weekly digest</span><div class="avatar" role="img" aria-label="Signed-in user">PM</div></div>
+  </header>
+
+  <main class="main-area">
+    <!-- MANAGER: exceptions only -->
+    <section class="view active" id="landlord-view" aria-labelledby="landlord-title">
+      <div class="effort"><span class="effort-num">0</span><div><strong>actions by default</strong><span>Weekly email digest. Opens here only when something needs the manager.</span></div></div>
+
+      <h1 id="landlord-title">Unit 4B</h1>
+      <p class="lead muted" id="landlord-property">—</p>
+
+      <ul class="status-list">
+        <li><span class="dot dot-amber"></span><div><strong>Contract renewal</strong><span class="muted small"><span id="landlord-expiry">—</span> · <span id="landlord-days"></span></span></div><span class="muted small">Resident decides</span></li>
+        <li><span class="dot"></span><div><strong>Meter reading</strong><span class="muted small" id="landlord-reading-summary"></span></div><span class="badge badge-soft" id="landlord-reading-status">Not entered</span></li>
+        <li><span class="dot dot-green"></span><div><strong id="landlord-tenant">—</strong><span class="muted small" id="landlord-tenant-meta"></span></div><span class="muted small">Tenancy active</span></li>
+      </ul>
+
+      <p class="notice">Resident consent is required before personal data is shared or an order is placed.</p>
+
+      <details class="fold">
+        <summary><span>Current supply</span><span class="muted small" id="landlord-provider">—</span></summary>
+        <p class="muted small" id="landlord-price"></p>
+        <p class="muted small" id="landlord-property-meta"></p>
+      </details>
+      <details class="fold">
+        <summary><span>Offers sent to resident</span><span class="count-label" id="landlord-offer-count">0 offers</span></summary>
+        <div class="offer-list" id="landlord-offers"></div>
+      </details>
+      <details class="fold">
+        <summary><span>Property record</span></summary>
+        <div class="detail-list" id="property-details"></div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="app-footer">Reltix · local demo · sample data, no external services</footer>
+</body>
+</html>
