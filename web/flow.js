@@ -821,7 +821,7 @@ function renderPortfolio() {
       <span class="fr-actions">
         ${canCall ? `<button type="button" class="mini-btn" data-callnow="${r.unit_id}" title="Mia calls ${esc(r.tenant)} now">☎ Call</button>` : ""}
         <details class="row-menu"><summary aria-label="Open views">⋯</summary><div>
-          <a href="/reltix?unit=${r.unit_id}">Case</a>${r.tenant ? `<a href="/tenant?unit=${r.unit_id}" target="_blank" rel="noopener">Resident view</a><a href="/supplier?unit=${r.unit_id}">Supplier view</a><a href="/owner?unit=${r.unit_id}">Owner view</a>` : ""}
+          <a href="/reltix?unit=${r.unit_id}#case">Case</a>${r.tenant ? `<a href="/tenant?unit=${r.unit_id}" target="_blank" rel="noopener">Resident view</a><a href="/supplier?unit=${r.unit_id}">Supplier view</a><a href="/owner?unit=${r.unit_id}">Owner view</a>` : ""}
         </div></details>
       </span></div>`;
   }).join("") || `<p class="muted small empty">${q ? `No flat matches “${esc(flats.query)}”.` : "Nothing here."}</p>`;
@@ -867,7 +867,7 @@ function renderInbox() {
       <span class="ib-icon" aria-hidden="true">${icon}</span>
       <div class="ib-body"><strong>${flatId(i.unit_id)} · ${esc(i.tenant)}</strong><span class="ib-kind">${i.urgent ? "Urgent · " : ""}${kind}</span><p>${esc(i.text)}</p></div>
       <div class="ib-actions">
-        <a class="mini-btn" href="/reltix?unit=${i.unit_id}">Open case</a>
+        <a class="mini-btn" href="/reltix?unit=${i.unit_id}#case">Open case</a>
         <button type="button" class="mini-btn primary" data-handled="${i.kind}" data-unit="${i.unit_id}" data-issue="${esc(i.issue_id || "")}">✓ Mark handled</button>
       </div></div>`;
   }).join("") : `<div class="inbox-empty"><strong>All clear.</strong><span>Nothing needs a person right now. Mia and centrix are handling the rest.</span></div>`;
@@ -896,7 +896,7 @@ function toast(title, text, unit) {
   const t = document.createElement("button");
   t.type = "button"; t.className = "toast";
   t.innerHTML = `<strong>${esc(title)}</strong><span>${esc(text)}</span>`;
-  t.addEventListener("click", () => { if (unit) location.href = `/reltix?unit=${unit}`; });
+  t.addEventListener("click", () => { if (unit) location.href = `/reltix?unit=${unit}#case`; });
   stack.appendChild(t);
   setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, 6000);
 }
@@ -957,6 +957,7 @@ function render() {
   renderPartner();
   renderManager();
   renderNetwork();
+  showCaseIfAsked();
 }
 
 document.addEventListener("submit", async event => {
@@ -1034,6 +1035,32 @@ document.addEventListener("click", async (event) => {
 });
 document.addEventListener("change", (event) => { if (event.target.id === "phone-flat") renderPhonePop(); });
 
+/* ---------- staff dashboard: "Open case" lands on the case panel ---------- */
+// Case links end in #case. Once the flat has loaded, scroll to its case and flash it so you see what changed.
+let caseShown = false;
+function showCaseIfAsked() {
+  if (caseShown || location.hash !== "#case" || !state.unit) return;
+  const panel = document.getElementById("landlord-view");
+  if (!panel) return;
+  caseShown = true;
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  panel.classList.add("flash");
+  setTimeout(() => panel.classList.remove("flash"), 1800);
+}
+document.addEventListener("click", (event) => {
+  // Same flat already open: no reload, just jump to the case.
+  const a = event.target.closest('a[href*="#case"]');
+  if (!a) return;
+  const url = new URL(a.href);
+  if (url.pathname === location.pathname && url.searchParams.get("unit") === PINNED_UNIT) {
+    event.preventDefault();
+    caseShown = false; history.replaceState(null, "", url.pathname + url.search + "#case");
+    showCaseIfAsked();
+  }
+}, true);
+
+window.addEventListener("hashchange", () => { caseShown = false; showCaseIfAsked(); });
+
 /* ---------- staff dashboard: buttons that do things ---------- */
 document.addEventListener("click", async (event) => {
   if (!document.body.classList.contains("dash")) return;
@@ -1082,13 +1109,13 @@ document.addEventListener("click", async (event) => {
     return;
   }
   const open = el.closest("[data-open]");
-  if (open && open.dataset.open && !el.closest("a,button,details,summary")) location.href = `/reltix?unit=${open.dataset.open}`;
+  if (open && open.dataset.open && !el.closest("a,button,details,summary")) location.href = `/reltix?unit=${open.dataset.open}#case`;
 });
 document.addEventListener("keydown", (event) => {
   if (!document.body.classList.contains("dash")) return;
   if (event.key === "/" && !/input|textarea/i.test(document.activeElement?.tagName || "")) { event.preventDefault(); byId("flat-search").focus(); }
   const row = event.target.closest?.("[data-open]");
-  if (row && event.key === "Enter" && row.dataset.open && event.target === row) location.href = `/reltix?unit=${row.dataset.open}`;
+  if (row && event.key === "Enter" && row.dataset.open && event.target === row) location.href = `/reltix?unit=${row.dataset.open}#case`;
 });
 document.addEventListener("input", (event) => {
   if (event.target.id === "flat-search") { flats.query = event.target.value; flats.limit = 10; renderPortfolio(); }
