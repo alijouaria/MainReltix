@@ -30,7 +30,11 @@ const post = async (path, body) => {
 };
 const logEvent = (type, text, channel = "voice") => post("/api/events", { type, text, channel, unit_id: UNIT }).catch(() => {});
 // The outbound call centrix queued for this flat after its daily trigger run (null if none).
-const queuedCall = () => (state.calls || []).slice().reverse().find((c) => ["queued", "ringing"].includes(c.status)) || null;
+// A callback the resident asked for only rings once its time (due_at) has come.
+const isDue = (c) => !c.due_at || Date.parse(c.due_at) <= Date.now();
+const handledCalls = new Set(); // answered/declined/simulated here, even if the server hasn't caught up yet
+const queuedCall = () => (state.calls || []).slice().reverse().find((c) => ["queued", "ringing"].includes(c.status) && isDue(c) && !handledCalls.has(c.call_id)) || null;
+const idleish = () => call.status === "idle" || call.status === "ended";
 const setCallStatus = (c, status) => c && post(`/api/calls/${c.call_id}`, { status }).catch(() => {});
 // Everything the resident tells Mia or the portal is stored once on the flat (main.py update_case), so all pages show it.
 const saveCase = (patch, source = "voice") => post("/api/case", { unit_id: UNIT, source, ...patch }).then(() => refreshState()).catch(() => {});
@@ -93,8 +97,11 @@ const clientTools = {
     return "Recorded. Nothing will be shared with the partner.";
   },
   request_callback: ({ preferred_time }) => {
-    saveCase({ callback: preferred_time || "later" });
-    return "Callback scheduled.";
+    const when = String(preferred_time || "later");
+    saveCase({ callback: when });
+    return /\d|second|minute|hour/i.test(when)
+      ? `Callback scheduled ${when}. Confirm the time in a few words, say goodbye and end the call so the line is free.`
+      : `Callback noted for ${when}; the property team will call then. Say goodbye and end the call.`;
   },
   save_meter_reading: async ({ value_kwh }) => {
     const value = Number(String(value_kwh).replace(",", ".").replace(/[^0-9.]/g, ""));
@@ -149,21 +156,23 @@ function ring(on) {
 
 function checkIncoming() {
   const c = queuedCall();
-  if (c && call.status === "idle" && !call.incoming) {
+  if (c && idleish() && !call.incoming) {
     call.incoming = c;
     if (c.status === "queued") setCallStatus(c, "ringing");
     ring(true);
   }
-  if (!c && call.incoming && call.status === "idle") { call.incoming = null; ring(false); }
+  if (!c && call.incoming && idleish()) { call.incoming = null; ring(false); }
 }
 
 async function answerIncoming() {
   ring(false);
+  if (call.incoming) handledCalls.add(call.incoming.call_id);
   setCallStatus(call.incoming, "answered");
   await startCall();
 }
 function declineIncoming() {
   ring(false);
+  if (call.incoming) handledCalls.add(call.incoming.call_id);
   setCallStatus(call.incoming, "declined");
   Object.assign(call, { incoming: null, status: "ended", linkSent: "SMS", transcript: [] });
   render();
@@ -214,6 +223,7 @@ async function endCall() {
 
 function simulateCall() {
   const answered = call.incoming;
+  if (answered) handledCalls.add(answered.call_id);
   call.incoming = null;
   ring(false);
   if (answered) setCallStatus(answered, "answered").then(() => setCallStatus(answered, "done"));
@@ -242,7 +252,7 @@ function renderCall() {
   } else if (call.status === "connected") {
     head = `<strong><span class="live-dot"></span> On a call with Mia</strong><span class="muted small">${call.muted ? "Your mic is muted" : call.mode === "speaking" ? "Mia is speaking…" : "Listening…"}</span>`;
     actions = `<button class="text-button" type="button" data-call="mute">${call.muted ? "Unmute" : "Mute"}</button><button class="button" type="button" data-call="end">Hang up</button>`;
-  } else if (call.incoming) {
+  } else if (call.incoming && idleish()) {
     const c = call.incoming;
     head = `<strong><span class="live-dot"></span> Incoming call · reltix${c.urgent ? " · urgent" : ""}</strong><span class="muted small">centrix's daily check found your contract ending soon and asked Mia to call you.${audioReady() ? "" : " <b>Tap anywhere to hear it ring.</b>"}</span>`;
     actions = `<button class="button button-primary" type="button" data-call="answer">Answer</button><button class="text-button" type="button" data-call="decline">Decline</button><button class="text-button" type="button" data-call="simulate">No mic? Simulate</button>`;
@@ -253,7 +263,7 @@ function renderCall() {
     head = `<strong>Mia, your reltix assistant</strong><span class="muted small">Calls you about your contract, answers questions, then sends this page to confirm.</span>`;
     actions = `<button class="button button-primary" type="button" data-call="start">Start the call</button><button class="text-button" type="button" data-call="simulate">No mic? Simulate it</button>`;
   }
-  card.classList.toggle("ringing", !!call.incoming && call.status === "idle");
+  card.classList.toggle("ringing", !!call.incoming && idleish());
   card.innerHTML = `
     <div class="call-head"><span class="call-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg></span><div>${head}</div><div class="call-actions">${actions}</div></div>
     ${lines ? `<div class="call-script">${lines}</div>` : ""}
@@ -271,7 +281,7 @@ const clock = () => {
 function renderPhone() {
   if (!document.getElementById("call-card")) return;
   let el = document.getElementById("phone-screen");
-  const ringingNow = !!call.incoming && call.status === "idle";
+  const ringingNow = !!call.incoming && idleish();
   const live = call.status === "connecting" || call.status === "connected";
   if (!ringingNow && !live) { el?.remove(); document.body.classList.remove("in-call"); return; }
   if (!el) { el = document.createElement("div"); el.id = "phone-screen"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Phone call"); document.body.appendChild(el); }
@@ -279,7 +289,7 @@ function renderPhone() {
   const who = state.unit?.tenant?.name || "";
   let sub, buttons;
   if (ringingNow) {
-    sub = `Incoming call${call.incoming.urgent ? " · urgent" : ""}${audioReady() ? "" : `<br><span class="phone-tap-hint">Tap anywhere to hear it ring</span>`}`;
+    sub = `${call.incoming.kind === "callback" ? "Calling you back" : "Incoming call"}${call.incoming.urgent ? " · urgent" : ""}${audioReady() ? "" : `<br><span class="phone-tap-hint">Tap anywhere to hear it ring</span>`}`;
     buttons = `
       <div class="phone-btn-wrap"><button class="phone-btn decline" type="button" data-call="decline" aria-label="Decline">${ICON_PHONE}</button><span>Decline</span></div>
       <div class="phone-btn-wrap"><button class="phone-btn answer" type="button" data-call="answer" aria-label="Answer">${ICON_PHONE}</button><span>Answer</span></div>`;
@@ -292,17 +302,17 @@ function renderPhone() {
   const last = call.transcript.slice(-2).map((l) => `<p class="${l.who === "You" ? "you" : ""}"><b>${esc(l.who)}:</b> ${esc(l.text)}</p>`).join("");
   const cls = ringingNow ? "ringing" : call.mode === "speaking" ? "speaking" : "";
   if (el.className !== cls) el.className = cls;
-  const html = `
-    <div class="phone-top">
+  // Each part updates on its own, so a tap on a button is never lost when the text above it changes.
+  if (!el.firstChild) el.innerHTML = `<div class="phone-top"></div><div class="phone-lines"></div><div class="phone-bottom"></div>`;
+  const set = (sel, html) => { const part = el.querySelector(sel); if (part.dataset.html !== html) { part.dataset.html = html; part.innerHTML = html; } };
+  set(".phone-top", `
       <div class="phone-avatar">M</div>
       <h2>Mia · reltix</h2>
       <p class="phone-sub">${sub}</p>
-      <p class="phone-about">${ringingNow ? `About your electricity contract${who ? ` · ${esc(who)}` : ""}` : "Speak normally, like on a phone call"}</p>
-    </div>
-    <div class="phone-lines">${live ? last : ""}${call.error ? `<p class="err">${esc(call.error)}</p>` : ""}</div>
-    <div class="phone-buttons">${buttons}</div>`;
-  // Only touch the DOM when something changed, so a tap is never lost to the 2.5 s refresh.
-  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+      <p class="phone-about">${ringingNow ? `About your electricity contract${who ? ` · ${esc(who)}` : ""}` : "Speak normally, like on a phone call"}</p>`);
+  set(".phone-lines", `${live ? last : ""}${call.error ? `<p class="err">${esc(call.error)}</p>` : ""}`);
+  set(".phone-bottom", `<div class="phone-buttons">${buttons}</div>
+    ${ringingNow ? `<button class="phone-simulate" type="button" data-call="simulate">No mic? Simulate the call</button>` : ""}`);
   const timer = document.getElementById("phone-timer");
   if (timer) timer.textContent = clock();
 }

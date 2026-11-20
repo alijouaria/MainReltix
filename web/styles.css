@@ -492,6 +492,7 @@ body.in-call { overflow: hidden; }
 .phone-lines p { margin: 6px 0; text-align: left; }
 .phone-lines p.you { text-align: right; opacity: .75; }
 .phone-lines .err { color: #fca5a5; text-align: center; }
+.phone-bottom { display: flex; flex-direction: column; align-items: center; }
 .phone-buttons { display: flex; gap: 72px; justify-content: center; }
 .phone-btn-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 14px; opacity: .95; }
 .phone-btn { width: 76px; height: 76px; border-radius: 50%; border: 0; display: grid; place-items: center; cursor: pointer; color: #fff; }
@@ -502,6 +503,7 @@ body.in-call { overflow: hidden; }
 .phone-btn.mute { background: rgba(255,255,255,.18); }
 .phone-btn.mute.on { background: #fff; color: #121826; }
 .phone-btn:disabled { opacity: .4; }
+.phone-simulate { margin-top: 18px; background: none; border: 0; color: rgba(255,255,255,.55); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
 #phone-screen.ringing .phone-btn.answer { animation: phonebounce 1s ease-in-out infinite; }
 @keyframes phonebounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 @media (prefers-reduced-motion: reduce) { #phone-screen *, #phone-screen { animation: none !important; } }

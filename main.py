@@ -192,6 +192,41 @@ def place_phone_call(call: dict, to_number: str) -> tuple[bool, str]:
     return True, "Calling."
 
 
+NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
+
+
+def callback_delay_seconds(text: str):
+    """'in 10 seconds', 'in five minutes', 'in an hour' -> seconds. None for things like 'tomorrow evening'."""
+    t = text.lower().replace("half an hour", "30 minutes")
+    m = re.search(r"(\d+|" + "|".join(NUMBER_WORDS) + r")\s*(sec|second|min|minute|hour|hr)", t)
+    if not m:
+        return None
+    n = int(m.group(1)) if m.group(1).isdigit() else NUMBER_WORDS[m.group(1)]
+    unit = m.group(2)
+    seconds = n * (3600 if unit.startswith("h") else 60 if unit.startswith("min") else 1)
+    return max(10, min(seconds, 24 * 3600))
+
+
+def schedule_callback(unit_id: str, when_text: str):
+    """Queue a new call that rings again at the time the resident asked for (if it's a relative time)."""
+    delay = callback_delay_seconds(when_text)
+    if delay is None:
+        return None
+    unit = read_json(unit_path(unit_id))
+    calls = read_list(CALLS_FILE, "calls")
+    for c in calls:  # one pending callback per flat
+        if c["unit_id"] == unit_id and c.get("kind") == "callback" and c["status"] == "queued":
+            c["status"] = "done"
+    due = datetime.now(timezone.utc) + timedelta(seconds=delay)
+    due_iso = due.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": (unit.get("tenant") or {}).get("name"),
+                  "case": "callback", "kind": "callback", "status": "queued", "channel": "browser", "urgent": False,
+                  "due_at": due_iso, "created_at": now_iso(), "history": [{"status": "queued", "at": now_iso()}]})
+    write_json(CALLS_FILE, {"calls": calls})
+    return due
+
+
 def run_trigger(source: str = "scheduled") -> dict:
     """Daily centrix check (connector spec §11): open a case when an active energy contract enters its
     renewal window (today >= expiry - renewal_notice_days). Every unit gets a decision and a reason."""
@@ -492,7 +527,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             changes.append(f"prefers {case['preferred_channel'].upper()}")
         if "callback" in body:
             case["callback"] = str(body["callback"])[:80]
-            changes.append(f"callback {case['callback']}")
+            due = schedule_callback(unit_id, case["callback"])
+            changes.append(f"asked for a callback {case['callback']}" + (f" (Mia calls back at {due.astimezone().strftime('%H:%M:%S')})" if due else ""))
         if "declined" in body:
             case["declined"] = bool(body["declined"])
             case["declined_reason"] = str(body.get("reason", ""))[:80]
