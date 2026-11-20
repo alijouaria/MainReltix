@@ -21,6 +21,10 @@
           "value_kwh": 18420,
           "read_at": "2026-10-31"
         },
+        "demo_end_reading": {
+          "value_kwh": 18610,
+          "read_at": "2026-12-31"
+        },
         "switch_reading": {
           "value_kwh": null,
           "read_at": null

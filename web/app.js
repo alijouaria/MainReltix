@@ -15,7 +15,8 @@ const money = (value) => new Intl.NumberFormat("en-IE", { style: "currency", cur
 const prettyDate = (value) => value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${value}T12:00:00`)) : "Not set";
 
 function energyContract() {
-  return state.unit?.contracts?.find((contract) => contract.type === "energy_supply") || {};
+  const contracts = state.unit?.contracts?.filter(contract => contract.type === "energy_supply") || [];
+  return contracts.find(contract => contract.status === "active") || contracts.find(contract => contract.status === "ending") || contracts[0] || {};
 }
 
 function electricityMeter() {
@@ -99,7 +100,8 @@ function render() {
     expiryBadge.className = remaining <= 60 ? "badge badge-amber" : "badge badge-green";
     byId("expiry-message").textContent = `Your current contract ends in ${remaining} days.`;
   }
-  byId("expiry-subtext").textContent = offers.length
+  const currentOrder = (state.orders || []).at(-1);
+  byId("expiry-subtext").textContent = (!state.offer_available || (currentOrder && currentOrder.status !== "rejected")) ? "" : offers.length
     ? `${offers.length} partner ${offers.length === 1 ? "offer is" : "offers are"} available to review.`
     : "There are no partner offers available yet.";
 
