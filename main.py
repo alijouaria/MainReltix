@@ -50,6 +50,25 @@ ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "
 DATA_LOCK = RLock()
 
 
+def meter_id(unit_id: str, meter: dict, index: int) -> str:
+    """Stable per-unit identifier, even when a meter number has not been recorded yet."""
+    return str(meter.get("meter_id") or f"{unit_id}:{meter.get('type', 'meter')}:{index + 1}")
+
+
+def electricity_meters(unit: dict) -> list[tuple[int, dict, str]]:
+    return [(i, item, meter_id(unit.get("unit_id", "unit_4b"), item, i))
+            for i, item in enumerate(unit.get("unit", {}).get("meters", []))
+            if item.get("type") == "electricity"]
+
+
+def selected_electricity_meter(unit: dict, requested_id: str | None = None) -> dict | None:
+    meters = electricity_meters(unit)
+    selected_id = requested_id or unit.get("unit", {}).get("selected_electricity_meter_id")
+    if selected_id:
+        return next((meter for _, meter, identity in meters if identity == selected_id), None)
+    return meters[0][1] if len(meters) == 1 else None
+
+
 def view_for(role: str, unit: dict, partner: dict) -> dict:
     """Return only the records a role may see (data minimisation per connector spec)."""
     contracts = unit.get("contracts", [])
@@ -62,7 +81,9 @@ def view_for(role: str, unit: dict, partner: dict) -> dict:
                 "unit_id": unit.get("unit_id"),
                 "property": unit.get("property", {}),
                 "unit": {**unit.get("unit", {}), "meters": [
-                    {k: v for k, v in m.items() if k != "demo_end_reading"} for m in unit.get("unit", {}).get("meters", [])]},
+                    {**{k: v for k, v in m.items() if k != "demo_end_reading"},
+                     "meter_id": meter_id(unit.get("unit_id", "unit_4b"), m, i)}
+                    for i, m in enumerate(unit.get("unit", {}).get("meters", []))]},
                 "owner": {"name": unit.get("owner", {}).get("name")},
                 "tenant": (unit.get("tenant") or {}),
                 "contracts": [c for c in contracts if c.get("customer_contact_id", (unit.get("tenant") or {}).get("contact_id")) == (unit.get("tenant") or {}).get("contact_id")],
@@ -70,12 +91,14 @@ def view_for(role: str, unit: dict, partner: dict) -> dict:
             "partner": partner,
         }
     if role == "partner":
-        meters = [m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"]
+        meters = [(i, m) for i, m in enumerate(unit.get("unit", {}).get("meters", [])) if m.get("type") == "electricity"]
         return {
             "unit": {
                 "unit_id": unit.get("unit_id"),
                 "property": {"address": unit.get("property", {}).get("address")},
-                "unit": {"meters": [{"type": m.get("type"), "number": m.get("number"), "switch_reading": m.get("switch_reading")} for m in meters]},
+                "unit": {"meters": [{"type": m.get("type"), "number": m.get("number"),
+                                      "meter_id": meter_id(unit.get("unit_id", "unit_4b"), m, i),
+                                      "switch_reading": m.get("switch_reading")} for i, m in meters]},
                 "tenant": {"name": (unit.get("tenant") or {}).get("name")},
                 "contracts": [{"type": "energy_supply", "supplier": energy.get("supplier"), "expiry_date": energy.get("expiry_date")}] if energy else [],
             },
@@ -252,6 +275,7 @@ def run_trigger(source: str = "scheduled") -> dict:
     """Daily centrix check (connector spec §11): open a case when an active energy contract enters its
     renewal window (today >= expiry - renewal_notice_days). Every unit gets a decision and a reason."""
     today = demo_today()
+    deliver_requested_remote_readings(today)
     partner = read_json(OFFERS_FILE)
     prefixes = partner.get("eligibility_postcode_prefixes", DEFAULT_POSTCODE_PREFIXES)
     open_orders = {o.get("subject", {}).get("unit_id") for o in read_orders() if o.get("status") in ("submitted", "received", "needs_input", "confirmed")}
@@ -310,6 +334,46 @@ def run_trigger(source: str = "scheduled") -> dict:
            "attention": sum(r["decision"] == "attention" for r in results), "results": results}
     write_json(RUN_FILE, run)
     return run
+
+
+def deliver_requested_remote_readings(today: date) -> None:
+    """Supply a requested switch reading from the demo remote meter once its read date arrives."""
+    orders = read_orders()
+    changed = False
+    for order in orders:
+        if order.get("status") != "needs_input" or order.get("remote_reading_delivered"):
+            continue
+        request = next((entry for entry in reversed(order.get("status_history", []))
+                       if entry.get("status") == "needs_input"), {})
+        if not any(word in str(request.get("note", "")).lower() for word in ("meter", "reading")):
+            continue
+        unit_id = order.get("subject", {}).get("unit_id")
+        unit = read_json(unit_path(unit_id))
+        meters = electricity_meters(unit)
+        selected_id = order.get("meter_id") or order.get("subject", {}).get("meter", {}).get("meter_id")
+        meter = next((m for _, m, identity in meters if identity == selected_id), None)
+        if meter is None or not meter.get("number"):
+            continue
+        boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1))
+        sample = meter.get("demo_end_reading") or {}
+        switch = order.get("subject", {}).get("meter", {}).get("switch_reading", {})
+        if (today < boundary or sample.get("read_at") != boundary.isoformat()
+                or sample.get("value_kwh") is None or switch.get("value_kwh") is not None):
+            continue
+        delivered = {**sample, "source": "simulated_remote_meter"}
+        meter["switch_reading"] = delivered
+        order["subject"]["meter"].update(meter_id=selected_id, number=meter["number"], switch_reading=delivered)
+        order["remote_reading_delivered"] = True
+        order["status"] = "received"
+        order.setdefault("status_history", []).append({"status": "received", "at": now_iso(), "by": "centrix",
+                                                          "note": "Supplier-requested remote switch reading supplied."})
+        write_json(unit_path(unit_id), unit)
+        add_event("reading", f"Supplier-requested remote reading {sample['value_kwh']:g} kWh received on meter {meter['number']}.",
+                  "centrix", unit_id)
+        add_event("received", f"Order {order['order_id']} resumed after the remote meter reading arrived.", "centrix", unit_id)
+        changed = True
+    if changed:
+        write_orders(orders)
 
 
 def now_iso() -> str:
@@ -392,8 +456,10 @@ class DemoHandler(BaseHTTPRequestHandler):
             if role == "tenant":
                 # The resident sees their own order's progress, not the partner payload or the staff log.
                 view["orders"] = [{key: order.get(key) for key in ("order_id", "partner", "product", "requested_start",
-                                                                  "status", "status_history", "previous_contract", "reading_required")}
-                                  | {"switch_reading": order["subject"]["meter"]["switch_reading"]}
+                                                                  "status", "status_history", "previous_contract", "reading_required",
+                                                                  "meter_id")}
+                                  | {"switch_reading": order["subject"]["meter"]["switch_reading"],
+                                     "meter_number": order["subject"]["meter"].get("number")}
                                   for order in orders]
             else:
                 view["orders"] = orders
@@ -461,6 +527,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             body = self.read_body()
             if path == "/api/reading":
                 self.save_switch_reading(body)
+            elif path == "/api/meter":
+                self.update_meter(body)
             elif path == "/api/offers":
                 self.save_offers(body)
             elif path == "/api/chat":
@@ -509,25 +577,28 @@ class DemoHandler(BaseHTTPRequestHandler):
         unit_id = str(body.get("unit_id", "unit_4b"))
         unit = read_json(unit_path(unit_id))
         meters = unit.get("unit", {}).get("meters", [])
-        meter = next((item for item in meters if item.get("type") == "electricity"), None)
+        meter = selected_electricity_meter(unit, str(body.get("meter_id") or "") or None)
         if meter is None:
-            raise ValueError("No electricity meter is available for this unit.")
+            raise ValueError("Select the electricity meter for this reading.")
+        chosen_meter_id = next(identity for _, item, identity in electricity_meters(unit) if item is meter)
         previous = meter.get("last_reading") or {}
         if reading_date < (previous.get("read_at") or "") or value < (previous.get("value_kwh") or 0):
             raise ValueError("The switch reading must follow the last recorded reading.")
         orders = read_orders()
         pending = [o for o in orders if o["subject"]["unit_id"] == unit_id
+                   and (o.get("meter_id") or o.get("subject", {}).get("meter", {}).get("meter_id")) == chosen_meter_id
                    and o["status"] in ("submitted", "received", "needs_input", "confirmed")]
         for order in pending:
             boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1)).isoformat()
             if reading_date != boundary:
                 raise ValueError(f"Enter the switch reading taken on {boundary}.")
+        meter["meter_id"] = chosen_meter_id
         meter["switch_reading"] = {"value_kwh": value, "read_at": reading_date, "source": str(body.get("source", "portal"))[:20]}
         write_json(unit_path(unit_id), unit)
         add_event("reading", f"Meter reading {value:g} kWh saved ({meter['switch_reading']['source']}).", meter["switch_reading"]["source"], unit_id)
         # If the partner was waiting for this reading, centrix passes it on and resubmits (spec §6 needs_input → received).
         for order in pending:
-            order["subject"]["meter"]["number"] = meter["number"]
+            order["subject"]["meter"].update(meter_id=chosen_meter_id, number=meter.get("number"))
             order["subject"]["meter"]["switch_reading"] = meter["switch_reading"]
             if order["status"] == "needs_input":
                 order["status"] = "received"
@@ -536,7 +607,46 @@ class DemoHandler(BaseHTTPRequestHandler):
                 add_event("received", f"Resident added the meter reading ({value:g} kWh). centrix resubmitted order {order['order_id']}.", "portal", unit_id)
         if pending:
             write_orders(orders)
-        self.send_json(200, {"ok": True, "switch_reading": meter["switch_reading"]})
+        self.send_json(200, {"ok": True, "meter_id": chosen_meter_id, "switch_reading": meter["switch_reading"]})
+
+    def update_meter(self, body: dict) -> None:
+        """Select an electricity meter, correct its identifier, or add a missing meter record."""
+        unit_id = str(body.get("unit_id", "unit_4b"))
+        unit = read_json(unit_path(unit_id))
+        unit_record = unit.setdefault("unit", {})
+        meters = unit_record.setdefault("meters", [])
+        candidates = electricity_meters(unit)
+        selected_id = str(body.get("meter_id") or "").strip()
+        selected = next((m for _, m, identity in candidates if identity == selected_id), None) if selected_id else None
+        if selected_id and selected is None:
+            raise ValueError("That electricity meter is no longer available. Refresh and select it again.")
+        if selected is None:
+            if len(candidates) > 1:
+                raise ValueError("Select which electricity meter you mean.")
+            if candidates:
+                _, selected, selected_id = candidates[0]
+            else:
+                selected_id = selected_id or f"{unit_id}:electricity:1"
+                selected = {"type": "electricity", "meter_id": selected_id,
+                            "switch_reading": {"value_kwh": None, "read_at": None}}
+                meters.append(selected)
+        selected["meter_id"] = selected_id
+        unit_record["selected_electricity_meter_id"] = selected_id
+        number = str(body.get("number") or "").strip()
+        if number:
+            if not re.fullmatch(r"[A-Za-z0-9-]{5,32}", number):
+                raise ValueError("Enter a valid meter number from the meter label (5–32 letters or digits).")
+            selected["number"] = number
+            orders = read_orders()
+            for order in orders:
+                if (order.get("subject", {}).get("unit_id") == unit_id
+                        and (order.get("meter_id") or order.get("subject", {}).get("meter", {}).get("meter_id")) == selected_id
+                        and order.get("status") in ("submitted", "received", "needs_input", "confirmed")):
+                    order["subject"]["meter"].update(meter_id=selected_id, number=number)
+            write_orders(orders)
+            add_event("meter_identifier", f"Meter identifier {number} saved for the selected electricity meter.", "portal", unit_id)
+        write_json(unit_path(unit_id), unit)
+        self.send_json(200, {"ok": True, "meter_id": selected_id, "number": selected.get("number")})
 
     def save_offers(self, body: dict) -> None:
         text = str(body.get("text", "")).strip()
@@ -728,7 +838,13 @@ class DemoHandler(BaseHTTPRequestHandler):
         if body.get("consent_given") is not True or body.get("channel", "portal") != "portal":
             raise ValueError("The tenant has not given consent; nothing is shared with the partner.")
 
-        meter = next((item for item in unit.get("unit", {}).get("meters", []) if item.get("type") == "electricity"), {})
+        meter = selected_electricity_meter(unit, str(body.get("meter_id") or "") or None)
+        available_meters = electricity_meters(unit)
+        if not available_meters:
+            raise ValueError("No electricity meter is on file. Add the meter information before ordering.")
+        if meter is None:
+            raise ValueError("Choose which electricity meter this order is for.")
+        chosen_meter_id = next(identity for _, item, identity in available_meters if item is meter)
         reading = meter.get("switch_reading", {})
         if not (unit.get("tenant") or {}).get("contract_sharing_opt_in") or not portal_offer_available(unit_id):
             raise ValueError("No renewal offer is due for this flat.")
@@ -744,6 +860,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         if reading.get("read_at") != boundary:
             reading = {}
         tenant = (unit.get("tenant") or {})
+        meter["meter_id"] = chosen_meter_id
+        unit.setdefault("unit", {})["selected_electricity_meter_id"] = chosen_meter_id
+        write_json(unit_path(unit_id), unit)
         channel = str(body.get("channel") or "portal")
         data_shared = ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date"]
 
@@ -757,12 +876,13 @@ class DemoHandler(BaseHTTPRequestHandler):
             "estimated_monthly_price_eur": offer.get("estimated_monthly_price_eur"),
             "kind": "sell",
             "requested_start": requested_start,
+            "meter_id": chosen_meter_id,
             "reading_required": offer.get("requires_meter_reading", True),
             "subject": {
                 "unit_id": unit.get("unit_id"),
                 "address": unit.get("property", {}).get("address"),
                 "tenant": {"name": tenant.get("name"), "contact_via": "centrix"},
-                "meter": {"type": "electricity", "number": meter.get("number"),
+                "meter": {"type": "electricity", "meter_id": chosen_meter_id, "number": meter.get("number"),
                           "switch_reading": ({**reading, "source": "tenant_entry"} if reading.get("value_kwh") is not None
                                              else {"value_kwh": None, "note": "sent on the switch date"})},
             },
@@ -806,20 +926,25 @@ class DemoHandler(BaseHTTPRequestHandler):
         note = str(body.get("note", ""))[:200]
         if note:
             entry["note"] = note
+        if new_status == "active":
+            unit = read_json(unit_path(order["subject"]["unit_id"]))
+            selected_id = order.get("meter_id") or order.get("subject", {}).get("meter", {}).get("meter_id")
+            meter = next((m for _, m, identity in electricity_meters(unit) if identity == selected_id), None)
+            if meter is None or not meter.get("number"):
+                raise ValueError("The electricity meter identifier is missing. Add or correct it before activating supply.")
+            order["subject"]["meter"].update(meter_id=selected_id, number=meter["number"])
+            if order.get("reading_required", True) and order["subject"]["meter"].get("switch_reading", {}).get("value_kwh") is None:
+                raise ValueError("Waiting for the selected meter’s switch reading before completing the handover.")
         if new_status == "confirmed":
             entry["result"] = {"contract_number": "EGE-" + order_id[-6:].upper(), "start": order.get("requested_start"),
                                "monthly_estimate_eur": order.get("estimated_monthly_price_eur")}
             unit = read_json(unit_path(order["subject"]["unit_id"]))
-            meter = next((m for m in unit["unit"]["meters"] if m["number"] == order["subject"]["meter"]["number"]), {})
-            sample = meter.get("demo_end_reading") or {}
-            boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1)).isoformat()
-            order["handover_date"] = boundary
-            if (order.get("reading_required", True) and order["subject"]["meter"]["switch_reading"].get("value_kwh") is None
-                    and sample.get("read_at") == boundary and sample.get("value_kwh") is not None):
-                order["subject"]["meter"]["switch_reading"] = {**sample, "source": "simulated_remote_meter"}
-        if (new_status == "active" and order.get("reading_required", True)
-                and order["subject"]["meter"]["switch_reading"].get("value_kwh") is None):
-            raise ValueError("Waiting for the tenant’s switch reading before completing the handover.")
+            selected_id = order.get("meter_id") or order.get("subject", {}).get("meter", {}).get("meter_id")
+            meter = next((m for _, m, identity in electricity_meters(unit) if identity == selected_id), None)
+            if meter is None:
+                raise ValueError("The selected electricity meter is no longer on file.")
+            order["subject"]["meter"].update(meter_id=selected_id, number=meter.get("number"))
+            order["handover_date"] = (date.fromisoformat(order["requested_start"]) - timedelta(days=1)).isoformat()
         if new_status == "active":
             order["handover_date"] = order["requested_start"]
         order["status_history"].append(entry)
@@ -845,8 +970,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         unit = read_json(path)
         reading = order["subject"]["meter"]["switch_reading"]
         if reading.get("source") == "simulated_remote_meter":
-            for meter in unit["unit"]["meters"]:
-                if meter["number"] == order["subject"]["meter"]["number"]:
+            selected_id = order.get("meter_id") or order.get("subject", {}).get("meter", {}).get("meter_id")
+            for index, meter in enumerate(unit["unit"]["meters"]):
+                if meter.get("type") == "electricity" and meter_id(unit.get("unit_id", "unit_4b"), meter, index) == selected_id:
                     meter["switch_reading"] = dict(reading)
         contracts = unit.setdefault("contracts", [])
         existing = next((item for item in contracts if item.get("order_id") == order["order_id"]), None)

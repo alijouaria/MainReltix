@@ -20,8 +20,26 @@ function energyContract() {
 }
 
 function electricityMeter() {
-  return state.unit?.unit?.meters?.find((meter) => meter.type === "electricity") || {};
+  const meters = (state.unit?.unit?.meters || []).filter((meter) => meter.type === "electricity");
+  const selectedId = byId("electric-meter-select").value || state.unit?.unit?.selected_electricity_meter_id;
+  return meters.find((meter) => meter.meter_id === selectedId) || meters[0] || {};
 }
+
+function renderMeterControls() {
+  const meters = (state.unit?.unit?.meters || []).filter((meter) => meter.type === "electricity");
+  const select = byId("electric-meter-select");
+  const previous = select.value || state.unit?.unit?.selected_electricity_meter_id;
+  select.innerHTML = meters.map((meter, index) => `<option value="${esc(meter.meter_id)}">${esc(meter.number || `Electricity meter ${index + 1} · number needed`)}</option>`).join("");
+  if (meters.some((meter) => meter.meter_id === previous)) select.value = previous;
+  if (meters.length > 1) byId("meter-select-wrap").hidden = false;
+  else if (meters.length === 1) { select.value = meters[0].meter_id; byId("meter-select-wrap").hidden = false; }
+  else { select.innerHTML = '<option value="">Add an electricity meter below</option>'; byId("meter-select-wrap").hidden = false; }
+  const meter = meters.find((item) => item.meter_id === select.value) || meters[0];
+  byId("meter-identifier-value").value = meter?.number || "";
+  byId("meter-identifier-value").required = !meter?.number;
+}
+
+window.selectedMeterId = () => byId("electric-meter-select").value || state.unit?.unit?.selected_electricity_meter_id || "";
 
 function daysUntil(value) {
   if (!value) return null;
@@ -59,6 +77,7 @@ function renderOffers(targetId, selectable = false) {
 
 function render() {
   if (!state.unit || !state.partner) return;
+  renderMeterControls();
   const unit = state.unit;
   const tenant = unit.tenant || {};
   const property = unit.property || {};
@@ -218,7 +237,8 @@ byId("reading-form").addEventListener("submit", async (event) => {
   try {
     const response = await fetch("/api/reading", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value, unit_id: UNIT })
+      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value,
+        unit_id: UNIT, meter_id: window.selectedMeterId() })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the reading.");
@@ -228,6 +248,32 @@ byId("reading-form").addEventListener("submit", async (event) => {
     message.textContent = error.message;
     message.classList.add("error");
   }
+});
+
+byId("electric-meter-select").addEventListener("change", async () => {
+  const message = byId("meter-identifier-message");
+  try {
+    const response = await fetch("/api/meter", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unit_id: UNIT, meter_id: window.selectedMeterId() }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not select that meter.");
+    await refreshState();
+  } catch (error) { message.textContent = error.message; message.classList.add("error"); }
+});
+
+byId("meter-identifier-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = byId("meter-identifier-message");
+  message.className = "form-message";
+  message.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/meter", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unit_id: UNIT, meter_id: window.selectedMeterId(), number: byId("meter-identifier-value").value }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not save the meter number.");
+    message.textContent = "Meter details saved.";
+    await refreshState();
+  } catch (error) { message.textContent = error.message; message.classList.add("error"); }
 });
 
 byId("offers-form").addEventListener("submit", async (event) => {

@@ -255,7 +255,8 @@ async function sign() {
   if (!offer) return;
   resident.busy = true; resident.error = ""; render();
   try {
-    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
+    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, meter_id: window.selectedMeterId?.(),
+      consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
     resident.consent = false;
   } catch (error) {
     resident.error = error.message;
@@ -268,8 +269,12 @@ async function sign() {
 
 const CALL_LINES = {
   submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.subject.tenant.name} at ${o.subject.address} would like your ${o.product} plan at ${money(o.estimated_monthly_price_eur)} a month, starting ${prettyDate(o.requested_start)}.`, `Can you take this order?`],
-  received: () => [`Is the start date confirmed, or do you need a reading?`, `Confirming advances this flat’s demo to the final reading date.`],
-  needs_input: () => [`I’ve asked the customer for the meter reading. I’ll call you back as soon as I have it.`],
+  received: () => [`Is the start date confirmed, or do you need a reading?`, `If you need the switch reading, ask for it before its due date.`],
+  needs_input: (o) => {
+    const boundary = new Date(`${o.requested_start}T00:00:00Z`);
+    boundary.setUTCDate(boundary.getUTCDate() - 1);
+    return [`I’ve asked the customer to provide the switch reading before ${prettyDate(boundary.toISOString().slice(0, 10))}. I’ll call you back as soon as I have it.`];
+  },
   confirmed: (o) => [`Great, I’ve told the customer it starts on ${prettyDate(o.requested_start)}.`, `I’ll check in on the start day to confirm the power is running.`],
   active: () => [`All done. The contract is filed with the property. Thank you!`],
   rejected: () => [`Understood. I’ll offer the customer another plan. Thank you.`],
@@ -307,7 +312,7 @@ function renderPartner() {
     ["Address", order.subject.address],
     ["Plan", `${order.product} · ${money(order.estimated_monthly_price_eur)}/month`],
     ["Start", prettyDate(order.requested_start)],
-    ["Meter", `${order.subject.meter.number} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : "reading on the switch date"}`],
+    ["Meter", `${order.subject.meter.number || "number missing"} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : `reading on ${prettyDate(order.requested_start)}`}`],
     ["Old contract", `${order.previous_contract.supplier}, ends ${prettyDate(order.previous_contract.ends)} · you cancel it`],
     ["Consent", `${order.consent.channel} · ${new Date(order.consent.given_at).toLocaleString("en-GB")}`],
   ];
@@ -322,7 +327,11 @@ function renderPartner() {
 }
 
 async function partnerAnswer(status) {
-  const note = status === "needs_input" ? "meter reading" : status === "rejected" ? "not available for this postcode" : "";
+  const order = latestOrder();
+  const boundary = new Date(`${order.requested_start}T00:00:00Z`);
+  boundary.setUTCDate(boundary.getUTCDate() - 1);
+  const note = status === "needs_input" ? `Please send the switch reading before ${boundary.toISOString().slice(0, 10)}.`
+    : status === "rejected" ? "not available for this postcode" : "";
   try {
     await post(`/api/orders/${latestOrder().order_id}/status`, { status, note });
   } catch (error) {

@@ -81,6 +81,12 @@
       <details class="fold" id="reading-fold">
         <summary><span>Meter reading</span><span class="badge badge-soft" id="reading-status">Not entered</span></summary>
         <p class="muted small">Only needed when the supplier changes and the meter isn’t read remotely.</p>
+        <label id="meter-select-wrap"><span>Electricity meter</span><select id="electric-meter-select" aria-label="Electricity meter"></select></label>
+        <form id="meter-identifier-form" class="feed-form">
+          <label><span>Meter number</span><input id="meter-identifier-value" type="text" minlength="5" maxlength="32" autocomplete="off" placeholder="From the meter label"></label>
+          <button class="button" type="submit">Save meter details</button>
+          <p class="form-message" id="meter-identifier-message" role="status"></p>
+        </form>
         <form id="reading-form" class="reading-form">
           <label><span>Reading (kWh)</span><input id="reading-value" type="number" min="0" step="0.1" placeholder="18720" required></label>
           <label><span>Date</span><input id="reading-date" type="date" required></label>
