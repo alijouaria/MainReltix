@@ -31,7 +31,8 @@ function daysUntil(value) {
   return Math.ceil((expiry - today) / 86_400_000);
 }
 
-let chosenOffer = null;
+let chosenOfferId = null;
+let chosenOfferVersion = null;
 
 function renderOffers(targetId, selectable = false) {
   const offers = state.partner?.offers || [];
@@ -43,17 +44,19 @@ function renderOffers(targetId, selectable = false) {
   const best = offers.reduce((a, b) => Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a);
   const tag = selectable ? "button" : "div";
   target.innerHTML = offers.map((offer, index) => `
-    <${tag} class="offer-row${offer === best ? " recommended" : ""}"${selectable ? ` type="button" data-index="${index}" aria-pressed="${chosenOffer === index}"` : ""}>
+    <${tag} class="offer-row${offer === best ? " recommended" : ""}"${selectable ? ` type="button" data-offer-id="${esc(offer.offer_id)}" aria-pressed="${chosenOfferId === offer.offer_id}"` : ""}>
       <div class="offer-main">
         <span class="offer-title">${esc(offer.product)}</span>
         <span class="offer-meta">${offer === best ? '<span class="offer-tag">Lowest price</span>' : ""}<span>${Number(offer.renewable_share_percent || 0)}% renewable</span><span>${Number(offer.contract_months || 0)} months</span></span>
       </div>
-      <div class="offer-price">${money(offer.estimated_monthly_price_eur)}<span>${chosenOffer === index && selectable ? "your pick" : "per month · estimate"}</span></div>
+      <div class="offer-price">${money(offer.estimated_monthly_price_eur)}<span>${chosenOfferId === offer.offer_id && selectable ? "your pick" : "per month · estimate"}</span></div>
     </${tag}>`).join("");
   if (selectable) target.querySelectorAll("button.offer-row").forEach((row) => row.addEventListener("click", () => {
-    chosenOffer = Number(row.dataset.index);
+    const offer = offers.find((item) => item.offer_id === row.dataset.offerId);
+    chosenOfferId = offer?.offer_id || null;
+    chosenOfferVersion = offer?.offer_version || null;
     renderOffers(targetId, true);
-    window.flow?.render();
+    window.flow?.chooseOffer(chosenOfferId, chosenOfferVersion);
   }));
 }
 
@@ -134,7 +137,11 @@ function render() {
   if (hasReading) {
     byId("reading-value").value = switchReading.value_kwh;
     byId("reading-date").value = switchReading.read_at || "";
+  } else if (state.today && !byId("reading-date").value) {
+    byId("reading-date").value = state.today;
   }
+  byId("meter-identifier-form").hidden = Boolean(meter.number);
+  if (meter.number) byId("meter-identifier-value").value = meter.number;
 
   renderJob();
   renderPlans();
@@ -159,6 +166,7 @@ async function refreshState() {
   if (!response.ok) throw new Error("Could not load the local demo records.");
   Object.assign(state, await response.json());
   if (follow && state.unit_id) UNIT = state.unit_id;
+  window.flow?.syncOfferVersion();
   render();
   window.flow?.render();
 }
@@ -228,6 +236,21 @@ byId("reading-form").addEventListener("submit", async (event) => {
     message.textContent = error.message;
     message.classList.add("error");
   }
+});
+
+byId("meter-identifier-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = byId("meter-identifier-message");
+  message.className = "form-message";
+  message.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/meter-identifier", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unit_id: UNIT, number: byId("meter-identifier-value").value }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not save the meter number.");
+    message.textContent = "Meter number added to the existing order.";
+    await refreshState();
+  } catch (error) { message.textContent = error.message; message.classList.add("error"); }
 });
 
 byId("offers-form").addEventListener("submit", async (event) => {

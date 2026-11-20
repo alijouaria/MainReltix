@@ -70,10 +70,12 @@
             <form id="problem-form" class="feed-form">
               <label>Mia asks what went wrong<textarea name="text" required maxlength="300" rows="3"></textarea></label>
               <div id="share-option" hidden><label class="consent"><input name="share" type="checkbox"><span>Share this complaint with my energy supplier and ask for a reply.</span></label></div>
+              <div class="answer-row"><button class="text-button" type="button" data-sim-disconnect="unsaved">Simulate disconnect before saving</button><button class="text-button" type="button" data-sim-disconnect="saved">Save note, then disconnect</button></div>
               <button class="button button-primary" type="submit">Finish demo call</button>
             </form>
           </details>
           <p class="form-message" id="issue-feedback" role="status"></p>
+          <div id="complaint-recovery"></div>
           <div id="issue-list"></div>
         </div>
       </section>
@@ -87,6 +89,11 @@
           <button class="button" type="submit">Save</button>
         </form>
         <p class="form-message" id="reading-message" role="status"></p>
+        <form id="meter-identifier-form" class="feed-form" hidden>
+          <label><span>Meter number</span><input id="meter-identifier-value" type="text" minlength="5" maxlength="32" autocomplete="off" placeholder="From the label on your meter" required></label>
+          <button class="button" type="submit">Add meter number</button>
+          <p class="form-message" id="meter-identifier-message" role="status"></p>
+        </form>
       </details>
 
       <details class="fold">
