@@ -36,10 +36,26 @@ def _call_openai(kind: str, context: dict) -> str:
     return text
 
 
+class _Blank(dict):
+    def __missing__(self, key):
+        return ""
+
+
+GENERIC = "Guardian update from reltix property management."
+
+
+def _fallback(kind: str, context: dict) -> str:
+    try:
+        return fallbacks.TEXT[kind].format_map(_Blank(context or {}))
+    except Exception:
+        return GENERIC
+
+
 def generate(kind: str, context: dict) -> str:
-    if not os.environ.get("OPENAI_API_KEY"):
-        return fallbacks.TEXT[kind].format(**context)
+    """Never raises: OpenAI if keyed and available, else canned fallback."""
+    if kind not in fallbacks.TEXT or not os.environ.get("OPENAI_API_KEY"):
+        return _fallback(kind, context)
     try:
         return _call_openai(kind, context)
     except Exception:
-        return fallbacks.TEXT[kind].format(**context)
+        return _fallback(kind, context)

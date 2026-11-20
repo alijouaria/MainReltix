@@ -20,3 +20,14 @@ def test_generate_fallback_on_exception(monkeypatch):
 
 def test_all_kinds_have_fallbacks():
     assert set(fallbacks.TEXT) == set(agent.KINDS)
+
+
+def test_fallback_missing_key_does_not_raise(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    out = agent.generate("landlord_approval", {"unit_id": "2a"})
+    assert "2a" in out
+
+
+def test_unknown_kind_does_not_raise(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert agent.generate("nope", {}) == agent.GENERIC
