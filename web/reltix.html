@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/app.js" defer></script>
+  <script src="/vendor/qrcode.js" defer></script>
   <script src="/flow.js" defer></script>
 </head>
 <body data-role="reltix" class="dash">
@@ -35,7 +36,14 @@
         <h1 class="dash-hello">Good to see you, property team</h1>
         <p class="muted small">Centrix checks each flat for renewals. Follow tenant decisions, complaint calls and supplier replies.</p>
       </div>
-      <div class="topbar-right"><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
+      <div class="topbar-right"><div class="phone-menu"><button class="chip-btn primary" type="button" id="phone-btn" aria-expanded="false" aria-controls="phone-pop">📱 Phone</button>
+        <div class="phone-pop" id="phone-pop" hidden>
+          <strong>Open a resident's page on your phone</strong>
+          <label class="small muted">Flat <select id="phone-flat"></select></label>
+          <div id="phone-qr" class="phone-qr"></div>
+          <div class="phone-link"><input id="phone-url" readonly aria-label="Phone link"><button class="mini-btn" type="button" id="phone-copy">Copy</button></div>
+          <p class="muted small" id="phone-note">Scan with the phone camera, then tap the page once so it can ring.</p>
+        </div></div><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
     </header>
 
     <div class="datebar" aria-label="Demo date">

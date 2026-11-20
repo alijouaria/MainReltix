@@ -622,6 +622,11 @@ class DemoHandler(BaseHTTPRequestHandler):
                 view["events"] = read_events(unit_id)
             self.send_json(200, view)
             return
+        if path == "/api/tunnel":
+            # Written by launch.py when the cloudflared phone link is up.
+            tunnel = ROOT / "data" / "tunnel.json"
+            self.send_json(200, {"url": read_json(tunnel).get("url") if tunnel.exists() else None})
+            return
         if path == "/api/portfolio":
             run = read_json(RUN_FILE) if RUN_FILE.exists() else None
             orders = read_orders()

@@ -1,5 +1,8 @@
 # Electricity renewal walkthrough
 
+**Start (one click):** double-click **`Start Reltix.bat`** (Mac/Linux: `python3 launch.py`). It starts the app and the phone link, opens the staff dashboard and copies a phone link to the clipboard. On the dashboard, click **📱 Phone**, pick a flat and scan the QR code with your phone. Close the window to stop. (Needs cloudflared once: `winget install Cloudflare.cloudflared`.)
+
+
 Start `python main.py` (the demo begins on 20 Nov 2026; add `--demo-date 2026-12-01` to start on Lena’s renewal). Use the home link to switch workspaces. The default flat, 4B, is Lena’s.
 
 1. **Tenant** · Lena’s current contract ends on 31 December. Choose Green Home 12, review the €78.40 monthly estimate, tick consent and select **Confirm & sign**.

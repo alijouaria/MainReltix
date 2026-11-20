@@ -634,3 +634,14 @@ button.kpi:focus-visible { outline: 2px solid var(--accent); }
 .fr-status .badge { white-space: nowrap; }
 .panel-network .net-node { width: 132px; padding: 10px 8px 12px; }
 .panel-network .net-node.resident { left: 22%; } .panel-network .net-node.supplier { left: 78%; }
+
+/* phone link + QR */
+.phone-menu { position: relative; }
+.phone-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; width: 300px; display: grid; gap: 10px; padding: 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-2); }
+.phone-pop[hidden] { display: none; }
+.phone-pop select { width: 100%; min-height: 36px; margin-top: 4px; padding: 0 8px; font: inherit; }
+.phone-qr { display: grid; place-items: center; padding: 8px; border-radius: 12px; background: #fff; }
+.phone-qr svg { width: 100%; max-width: 220px; height: auto; }
+.phone-link { display: flex; gap: 6px; }
+.phone-link input { flex: 1; min-width: 0; min-height: 30px; padding: 0 8px; font-size: 0.75rem; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
