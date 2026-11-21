@@ -552,6 +552,9 @@ def customer_status(unit: dict) -> str:
                      f"but has NOT confirmed or signed yet; the confirm link is in the portal.")
     else:
         lines.append("Has not chosen a new plan yet.")
+    blocked = offer_block_reason(unit)
+    if blocked and not order:
+        lines.append(f"No new plan can be arranged right now: {blocked}.")
     if case.get("declined"):
         lines.append(f"Said no to switching ({case.get('declined_reason') or 'no reason given'}).")
     if case.get("preferred_channel"):
@@ -600,6 +603,7 @@ def agent_variables(unit: dict) -> dict:
         "call_reason": "renewal",
         "language": (unit.get("tenant") or {}).get("language", "en"),
         "customer_status": customer_status(unit) if unit.get("tenant") else "Vacant flat.",
+        "renewal_offer": (lambda why: "available" if not why else f"NOT available: {why}")(offer_block_reason(unit)),
         "first_message": greeting or (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
                           f"I'm calling because your electricity contract with {energy.get('supplier', 'your supplier')} ends on "
                           f"{expiry.day} {expiry.strftime('%B')}. Do you have two minutes?") if expiry else
@@ -1078,6 +1082,28 @@ def daily_order_follow_ups(today: date) -> None:
             if call.get("call_id") in closed_ids:
                 call.update(closed_ids[call["call_id"]])
         write_json(CALLS_FILE, {"calls": calls})
+
+
+def offer_block_reason(unit: dict) -> str:
+    """Why reltix can't arrange a new plan for this flat right now ("" when it can). Mia says this instead of
+    promising offers or a confirm link that will never come."""
+    unit_id = unit.get("unit_id", "")
+    if not unit.get("tenant"):
+        return "the flat is vacant"
+    if not (unit.get("tenant") or {}).get("contract_sharing_opt_in", False):
+        return "the resident has turned off contract sharing, so reltix can't arrange a new contract for them"
+    coverage, postcode = postcode_coverage(unit, read_partner())
+    if coverage == "unsupported":
+        return f"no energy partner of reltix supplies postcode {postcode} yet, so there is no offer and no confirm link; the property manager is looking at other options and will get in touch"
+    if coverage == "unknown":
+        return "the postcode on file needs checking before any offer can be made; the property manager will get in touch"
+    rows = read_json(RUN_FILE)["results"] if RUN_FILE.exists() else []
+    row = next((r for r in rows if r["unit_id"] == unit_id), None)
+    if row and row["decision"] == "attention":
+        return f"{row['reason']} The property manager will get in touch"
+    if not portal_offer_available(unit_id):
+        return "the contract isn't in its renewal window yet, so there is no offer to confirm right now"
+    return ""
 
 
 def portal_offer_available(unit_id):

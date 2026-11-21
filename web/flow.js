@@ -108,6 +108,7 @@ function consentDisclosureText(offer) {
    Complaint calls (reason "problem") turn notes into a ticket. */
 const clientTools = {
   get_offers: () => {
+    if (!state.offer_available) return `NO OFFERS for this flat. ${state.agent_variables?.renewal_offer || "No renewal offer is open right now."} Do not present plans, record a choice or send a link. Explain this briefly, say the property manager will get in touch, and offer to note any question.`;
     const now = Number(currentContract().current_monthly_price_eur || 0);
     const cheapest = bestOffer();
     return JSON.stringify({ current_monthly_price_eur: now, offers: offers().map((o) => ({
@@ -116,6 +117,7 @@ const clientTools = {
       contract_months: o.contract_months, renewable_percent: o.renewable_share_percent, cheapest: o === cheapest })) });
   },
   record_choice: ({ offer_id }) => {
+    if (!state.offer_available) return "NOT SAVED: there is no open offer for this flat, so no plan can be chosen. Tell the resident the property manager will get in touch.";
     const offer = selectOffer(String(offer_id));
     if (!offer) return "Unknown offer_id. Call get_offers and use one of those ids.";
     saveCase({ chosen_offer_id: offer.offer_id, offer_version: offer.offer_version });
@@ -123,6 +125,9 @@ const clientTools = {
     return `Saved: ${offer.product}.`;
   },
   send_portal_link: ({ channel }) => {
+    // Only send a link when there is really something to confirm in it, and never claim otherwise.
+    if (!state.offer_available) return "NOT SENT: there is no offer to confirm for this flat, so there is no link. Tell the resident honestly; the property manager will get in touch.";
+    if (!serverCase().chosen_offer_id && !chosenOfferId) return "NOT SENT: no plan has been chosen yet. Ask which plan they want and call record_choice first.";
     const via = channel === "email" ? "email" : "SMS";
     call.linkSent = via;
     saveCase({ preferred_channel: via, note: `Confirm link sent by ${via}.` });
