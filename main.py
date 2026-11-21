@@ -359,11 +359,16 @@ def portfolio_review_queue() -> list[dict]:
                 pending.append(review_item(unit_id, "order", f"{order['order_id']}:start_unconfirmed", "Confirm whether supply started",
                                            "The supplier has not confirmed that supply began; property team follow-up is due."))
         for issue in unit.get("issues", []):
-            if issue.get("urgent") and not issue.get("reply"):
-                pending.append(review_item(unit_id, "issue", f"{issue.get('issue_id')}:{issue.get('reported_at')}",
-                                           "Respond to urgent resident report", issue.get("text", "Urgent report needs a response."),
-                                           severity="urgent"))
-    return [item for item in pending if latest.get(item["review_id"], {}).get("status") != "reviewed"]
+            if issue.get("reply") or issue.get("owner") == "partner" or issue.get("shared_order_id"):
+                continue
+            urgent = issue.get("urgent")
+            item = review_item(unit_id, "issue", issue["issue_id"],
+                               "Respond to urgent resident report" if urgent else "Reply to resident report",
+                               issue.get("text", ""), source=issue.get("source") or "Resident report",
+                               severity="urgent" if urgent else "attention")
+            pending.append({**item, "issue_id": issue["issue_id"]})
+    outstanding = [item for item in pending if item.get("issue_id") or latest.get(item["review_id"], {}).get("status") != "reviewed"]
+    return sorted(outstanding, key=lambda item: item["severity"] != "urgent")
 
 
 def connector_profile(partner: dict) -> dict:
@@ -458,6 +463,8 @@ def partner_order_view(order: dict, partner: dict, unit: dict) -> dict:
     view["subject"] = projected
     view["partner_data"] = partner_data
     view["requested_start"] = order.get("requested_start") if "start_date" in allowed else None
+    if view["requested_start"] and "meter.switch_reading" in allowed and order.get("reading_required", True):
+        view["switch_reading_date"] = switch_reading_date(view["requested_start"]).isoformat()
     previous = order.get("previous_contract") or {}
     view["previous_contract"] = {
         key: previous.get(key) for field, key in (("previous_contract.supplier", "supplier"),
@@ -679,7 +686,7 @@ def run_trigger(source: str = "scheduled") -> dict:
             continue
         cycle = renewal_cycle(energy)
         open_in_cycle = any(o.get("subject", {}).get("unit_id") == unit_id
-                            and (o.get("renewal_cycle") or renewal_cycle(o.get("previous_contract", {}))) == cycle
+                            and order_cycle(o) == cycle
                             and o.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed", "active")
                             for o in existing_orders)
         if open_in_cycle:
@@ -741,6 +748,15 @@ def run_trigger(source: str = "scheduled") -> dict:
         if not meter.get("number"):
             notes.append("meter number missing: Mia asks for a meter photo")
         reason = f"Offer available in the tenant portal. Contract ends {energy['expiry_date']}." + (" " + "; ".join(notes) if notes else "")
+        case = unit.setdefault("renewal_case", {})
+        if case.get("renewal_cycle") != cycle:
+            prior_order = next((o for o in reversed(existing_orders) if o["subject"]["unit_id"] == unit_id), {})
+            prior_cycle = case.get("renewal_cycle") or order_cycle(prior_order)
+            if prior_cycle and prior_cycle != cycle:
+                for key in ("chosen_offer_id", "chosen_offer_version", "chosen_offer_snapshot", "declined", "declined_reason"):
+                    case.pop(key, None)
+            case["renewal_cycle"] = cycle
+            write_json(unit_path(unit_id), unit)
         no_calls = tenant.get("contact_preference") == "no_calls"
         reason += " Resident asked not to be called: link sent by SMS." if no_calls else " Mia calls the resident."
         decide("matched", reason)
@@ -769,6 +785,10 @@ def run_trigger(source: str = "scheduled") -> dict:
     return run
 
 
+def switch_reading_date(requested_start: str) -> date:
+    return date.fromisoformat(requested_start) - timedelta(days=1)
+
+
 def deliver_requested_remote_readings(today: date) -> None:
     """Supply a requested switch reading from the demo remote meter once its read date arrives."""
     orders = read_orders()
@@ -787,7 +807,7 @@ def deliver_requested_remote_readings(today: date) -> None:
         meter = next((m for _, m, identity in meters if identity == selected_id), None)
         if meter is None or not meter.get("number"):
             continue
-        boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1))
+        boundary = switch_reading_date(order["requested_start"])
         sample = meter.get("demo_end_reading") or {}
         switch = order.get("subject", {}).get("meter", {}).get("switch_reading", {})
         if (today < boundary or sample.get("read_at") != boundary.isoformat()
@@ -882,6 +902,10 @@ def renewal_cycle(contract: dict) -> str | None:
     return f"{contract_id or 'legacy'}:{expiry}" if expiry else None
 
 
+def order_cycle(order: dict) -> str | None:
+    return order.get("renewal_cycle") or renewal_cycle(order.get("previous_contract", {}))
+
+
 def postcode_coverage(unit: dict, partner: dict) -> tuple[str, str | None]:
     address = str(unit.get("property", {}).get("address", ""))
     match = re.search(r"(?<!\d)(\d{5})(?!\d)", address)
@@ -929,7 +953,7 @@ def daily_order_follow_ups(today: date) -> None:
         unit_id = order.get("subject", {}).get("unit_id")
         unit = read_json(unit_path(unit_id))
         requested_start = date.fromisoformat(order["requested_start"])
-        boundary = requested_start - timedelta(days=1)
+        boundary = switch_reading_date(order["requested_start"])
         reading = order.get("subject", {}).get("meter", {}).get("switch_reading", {})
         if (order.get("status") == "needs_input" and today >= boundary
                 and reading.get("value_kwh") is None and not order.get("manual_reading_prompted")):
@@ -983,7 +1007,8 @@ def portal_offer_available(unit_id):
     if not (unit.get("tenant") or {}).get("contract_sharing_opt_in", False):
         return False
     rows = read_json(RUN_FILE)["results"] if RUN_FILE.exists() else []
-    return any(row["unit_id"] == unit_id and row["decision"] == "matched" for row in rows)
+    active = next((c for c in unit.get("contracts", []) if c.get("type") == "energy_supply" and c.get("status") == "active"), {})
+    return any(row["unit_id"] == unit_id and row["decision"] == "matched" and row.get("expiry") == active.get("expiry_date") for row in rows)
 
 
 def partner_consent_disclosure(offer: dict) -> dict:
@@ -1146,6 +1171,11 @@ class DemoHandler(BaseHTTPRequestHandler):
             view["calls"] = calls
             if role == "tenant":
                 # The resident sees their own order's progress, not the partner payload or the staff log.
+                decision_orders = orders
+                if view["offer_available"]:
+                    active = next(c for c in unit["contracts"] if c.get("type") == "energy_supply" and c.get("status") == "active")
+                    decision_orders = [o for o in orders if order_cycle(o) == renewal_cycle(active)]
+                view["decision_order_id"] = decision_orders[-1]["order_id"] if decision_orders else None
                 view["orders"] = [{key: order.get(key) for key in ("order_id", "partner", "product", "requested_start",
                                                                   "status", "status_history", "previous_contract", "reading_required",
                                                                   "meter_id", "start_unconfirmed", "proposed_start_date", "start_date_mismatch",
@@ -1159,6 +1189,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             else:
                 view["orders"] = orders
                 view["events"] = read_events(unit_id)
+            for order in view["orders"]:
+                if order.get("requested_start") and order.get("reading_required", True):
+                    order["switch_reading_date"] = switch_reading_date(order["requested_start"]).isoformat()
             self.send_json(200, view)
             return
         if path == "/api/tunnel":
@@ -1340,7 +1373,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                    and (o.get("meter_id") or o.get("subject", {}).get("meter", {}).get("meter_id")) == chosen_meter_id
                    and o["status"] in ("submitted", "received", "needs_input", "confirmed")]
         for order in pending:
-            boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1)).isoformat()
+            boundary = switch_reading_date(order["requested_start"]).isoformat()
             if reading_date != boundary:
                 raise ValueError(f"Enter the switch reading taken on {boundary}.")
         meter["meter_id"] = chosen_meter_id
@@ -1481,6 +1514,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             raise ValueError("A unit_id is required to record this review.")
         task = next((item for item in portfolio_review_queue() if item["review_id"] == review_id
                      and item["unit_id"] == unit_id), None)
+        if task and task.get("issue_id"):
+            raise ValueError("Send a reply to resolve this resident report.")
         if task is None:
             self.send_json(409, {"error": "This review item changed or has already been reviewed. Refresh the queue."})
             return
@@ -1839,13 +1874,13 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"order": retry, "replayed": True})
                 return
         duplicate = next((item for item in orders if item.get("subject", {}).get("unit_id") == unit_id
-                          and (item.get("renewal_cycle") or renewal_cycle(item.get("previous_contract", {}))) == cycle
+                          and order_cycle(item) == cycle
                           and item.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed", "active")), None)
         if duplicate:
             raise ValueError("An order for this renewal is already on file.")
         # Day after the old contract ends; if it already ended (urgent case), the next day from today.
         requested_start = max(date.fromisoformat(expiry) + timedelta(days=1), demo_today() + timedelta(days=1)).isoformat() if expiry else None
-        boundary = (date.fromisoformat(requested_start) - timedelta(days=1)).isoformat()
+        boundary = switch_reading_date(requested_start).isoformat()
         if reading.get("value_kwh") is None and meter.get("last_reading", {}).get("read_at") == boundary:
             reading = meter["last_reading"]
         if reading.get("read_at") != boundary:
@@ -1992,7 +2027,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             if meter is None:
                 raise ValueError("The selected electricity meter is no longer on file.")
             order["subject"]["meter"].update(meter_id=selected_id, number=meter.get("number"))
-            order["handover_date"] = (start - timedelta(days=1)).isoformat()
+            order["handover_date"] = switch_reading_date(start.isoformat()).isoformat()
         if new_status == "active":
             order["handover_date"] = order["requested_start"]
         order["status_history"].append(entry)

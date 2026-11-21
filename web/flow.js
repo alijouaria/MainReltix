@@ -55,6 +55,7 @@ const serverCase = () => state.case || {};
 const offers = () => state.partner?.offers || [];
 const latestOrder = () => (state.orders || []).slice(-1)[0] || null;
 const firstName = () => (state.unit?.tenant?.name || "there").split(" ")[0];
+// The contract Mia talks about on renewal calls (the running one, not a newly signed one).
 const currentContract = () => (state.unit?.contracts || []).find((c) => c.type === "energy_supply" && c.status !== "signed") || energyContract();
 const pickedOffer = () => offers().find((offer) => offer.offer_id === chosenOfferId) || null;
 const bestOffer = () => offers().reduce((a, b) => (Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a), offers()[0]);
@@ -468,20 +469,39 @@ function renderIssues() {
         <button class="button" type="submit">Send reply</button><span role="status" class="form-message"></span></form>` : "";
       const share = !i.reply && audience === "tenant" && shareable && !i.shared_order_id ?
         `<button class="text-button" type="button" data-share-issue="${esc(i.issue_id)}">Share with ${esc(order.partner)} and request a call</button>` : "";
-      return `<details class="fold"><summary>${i.urgent ? "Urgent complaint" : "Complaint"} · ${i.reply ? "Reply received" : "Awaiting " + to}</summary>
+      const targetId = audience === "reltix" ? ` id="reply-${esc(i.issue_id)}"` : "";
+      return `<details class="fold"${targetId}><summary>${i.urgent ? "Urgent complaint" : "Complaint"} · ${i.reply ? "Reply received" : "Awaiting " + to}</summary>
         <p>${esc(i.text)}</p>${handoff}${reply}${share}${form}</details>`;
     }).join("");
     if (box.dataset.html !== html && (!box.contains(document.activeElement) || box.dataset.unit !== UNIT)) {
       box.dataset.html = html; box.dataset.unit = UNIT; box.innerHTML = html;
+      if (audience === "reltix" && location.hash !== openedReply) openLinkedReply();
     }
   }
 }
 
+let openedReply = "";
+function openLinkedReply() {
+  openedReply = location.hash;
+  if (!openedReply.startsWith("#reply-")) return;
+  const ticket = document.getElementById(openedReply.slice(1));
+  if (!ticket) { openedReply = ""; return; }
+  ticket.open = true;
+  ticket.scrollIntoView({ block: "center" });
+  ticket.querySelector("textarea")?.focus({ preventScroll: true });
+}
+window.addEventListener("hashchange", openLinkedReply);
+
 function renderDecision() {
   const box = document.getElementById("decision");
   if (!box || !state.unit) return;
-  const order = latestOrder();
-  const contract = currentContract();
+  const order = decisionOrder();
+  const contract = energyContract();
+  const history = (state.orders || []).filter(item => item !== order).slice().reverse();
+  byId("renewal-history").hidden = !history.length;
+  byId("renewal-history-list").innerHTML = history.map(item =>
+    `<li>${esc(item.product)} · ${esc(item.partner)} · ${esc(STATUS_TEXT[item.status] || item.status)} · previous contract ended ${esc(prettyDate(item.previous_contract?.ends))}</li>`
+  ).join("");
   const terminal = order && ["rejected", "cancelled"].includes(order.status);
   byId("renewal-options").hidden = !state.offer_available || Boolean(order && !terminal);
 
@@ -490,9 +510,7 @@ function renderDecision() {
     const result = order.status_history.find((s) => s.result)?.result;
     const steps = RESIDENT_STEPS.map(([key, label]) => `<li class="${reached.has(key) ? "done" : ""}">${reached.has(key) ? "✓" : "○"} ${esc(label)}</li>`).join("");
     const readingNeeded = order.status === "needs_input" || (order.status === "confirmed" && order.reading_required !== false && order.switch_reading?.value_kwh == null);
-    const boundary = new Date(order.requested_start + "T00:00:00Z");
-    boundary.setUTCDate(boundary.getUTCDate() - 1);
-    const readDate = boundary.toISOString().slice(0, 10);
+    const readDate = order.switch_reading_date;
     const needs = readingNeeded ? `<p class="notice notice-amber">Enter the reading taken on ${esc(prettyDate(readDate))} below. It will be passed to the supplier.</p>` : "";
     const unconfirmed = order.start_unconfirmed ? `<p class="notice notice-amber">The supplier hasn’t confirmed whether supply started. The property team is following up.</p>` : "";
     const mismatch = order.start_date_mismatch ? `<p class="notice notice-amber">The supplier proposed ${esc(prettyDate(order.start_date_mismatch.proposed))}, but the requested start is ${esc(prettyDate(order.start_date_mismatch.requested))}. Neither date is confirmed yet.</p>` : "";
@@ -593,12 +611,8 @@ function syncOfferVersion() {
 
 const CALL_LINES = {
   submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.subject.tenant.name} at ${o.subject.address} would like your ${o.product} plan at ${money(o.estimated_monthly_price_eur)} a month, starting ${prettyDate(o.requested_start)}.`, `Can you take this order?`],
-  received: () => [`Is the start date confirmed, or do you need a reading?`, `If you need the switch reading, ask for it before its due date.`],
-  needs_input: (o) => {
-    const boundary = new Date(`${o.requested_start}T00:00:00Z`);
-    boundary.setUTCDate(boundary.getUTCDate() - 1);
-    return [`I’ve asked the customer to provide the switch reading before ${prettyDate(boundary.toISOString().slice(0, 10))}. I’ll call you back as soon as I have it.`];
-  },
+  received: (o) => [o.switch_reading_date ? `Can you confirm the start date, or do you need the meter reading taken on ${prettyDate(o.switch_reading_date)}?` : "Can you confirm the start date?"],
+  needs_input: (o) => [`I’ve requested the meter reading${o.switch_reading_date ? " taken on " + prettyDate(o.switch_reading_date) : ""}. I’ll call you back as soon as I have it.`],
   confirmed: (o) => [`Great, I’ve told the customer it starts on ${prettyDate(o.requested_start)}.`, `I’ll check in on the start day to confirm the power is running.`],
   active: () => [`All done. The contract is filed with the property. Thank you!`],
   rejected: () => [`Understood. I’ll offer the customer another plan. Thank you.`],
@@ -624,6 +638,7 @@ function renderPartner() {
     byId("order-card").innerHTML = "";
     byId("call-script").innerHTML = `<div class="call-line"><b>Assistant</b> Nothing to report yet.</div>`;
     byId("partner-actions").innerHTML = "";
+    delete byId("partner-actions").dataset.order;
     byId("job-timeline").innerHTML = "";
     byId("order-id-label").textContent = "";
     return;
@@ -638,7 +653,7 @@ function renderPartner() {
     ["Address", order.subject.address],
     ["Plan", `${order.product} · ${money(order.estimated_monthly_price_eur)}/month`],
     ["Start", prettyDate(order.requested_start)],
-    ["Meter", `${order.subject.meter.number || "number needed"} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : `reading on ${prettyDate(order.requested_start)}`}`],
+    ["Meter", [order.subject.meter.number || "number needed", reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : order.switch_reading_date && `Take the reading on ${prettyDate(order.switch_reading_date)}.`].filter(Boolean).join(" · ")],
     ["Old contract", `${order.previous_contract.supplier}, ends ${prettyDate(order.previous_contract.ends)} · you cancel it`],
     ["Consent", `${order.consent.channel} · ${new Date(order.consent.given_at).toLocaleString("en-GB")}`],
   ];
@@ -657,14 +672,28 @@ function renderPartner() {
   const canUpdateStart = ["submitted", "received", "pending"].includes(order.status);
   const startControls = canUpdateStart ? `<label class="small">Supplier start date<input type="date" id="partner-start-date" value="${esc(order.requested_start)}"></label>
     <label class="consent"><input type="checkbox" id="partner-supply-started"><span>Supply actually began on this date (required for a past date)</span></label>` : "";
-  const actions = [...(PARTNER_ANSWERS[order.status] || [])];
+  const actions = (PARTNER_ANSWERS[order.status] || []).filter(([status]) => status !== "needs_input" || order.switch_reading_date);
   if (order.start_date_mismatch && ["received", "pending"].includes(order.status) && !actions.some(([status]) => status === "rejected")) {
     actions.push(["rejected", "Decline proposed date", ""]);
   }
-  byId("partner-actions").innerHTML = actions
+  const panel = byId("partner-actions");
+  if (panel.dataset.order !== order.order_id) {
+    panel.innerHTML = '<span class="answer-row" data-status-actions></span><span class="answer-row" data-start-controls></span>';
+    panel.dataset.order = order.order_id;
+  }
+  const buttons = panel.querySelector("[data-status-actions]");
+  const controls = panel.querySelector("[data-start-controls]");
+  const buttonsHtml = actions
     .map(([status, label, cls]) => `<button class="button ${cls}" type="button" data-partner="${status}">${esc(label)}</button>`).join("")
-    + startControls
     + (order.status === "needs_input" ? `<span class="muted small">Waiting for the customer…</span>` : "");
+  if (buttons.dataset.html !== buttonsHtml) {
+    buttons.innerHTML = buttonsHtml;
+    buttons.dataset.html = buttonsHtml;
+  }
+  if (controls.dataset.html !== startControls) {
+    controls.innerHTML = startControls;
+    controls.dataset.html = startControls;
+  }
   byId("order-id-label").textContent = order.order_id;
   byId("job-timeline").innerHTML = order.status_history.slice().reverse().map((e) => `
     <li><strong>${esc(STATUS_TEXT[e.status] || e.status)}</strong><span class="muted">${new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · ${esc(e.by === "centrix" ? "centrix" : "you")}${e.note ? ` · ${esc(e.note)}` : ""}${e.result ? ` · contract ${esc(e.result.contract_number)}` : ""}</span></li>`).join("");
@@ -672,9 +701,8 @@ function renderPartner() {
 
 async function partnerAnswer(status) {
   const order = latestOrder();
-  const boundary = new Date(`${order.requested_start}T00:00:00Z`);
-  boundary.setUTCDate(boundary.getUTCDate() - 1);
-  const note = status === "needs_input" ? `Please send the switch reading before ${boundary.toISOString().slice(0, 10)}.`
+  byId("partner-actions").querySelector(".form-message")?.remove();
+  const note = status === "needs_input" ? `Take the meter reading on ${prettyDate(order.switch_reading_date)}.`
     : status === "rejected" ? order?.start_date_mismatch
       ? `Cannot honor requested start ${order.start_date_mismatch.requested}; proposed ${order.start_date_mismatch.proposed}`
       : "not available for this postcode" : "";
@@ -912,14 +940,16 @@ function reviewCard(item, names) {
     <span class="ib-icon" aria-hidden="true">${REVIEW_ICON[item.category] || "•"}</span>
     <div class="ib-body"><strong>${flatId(item.unit_id)} · ${esc(names[item.unit_id] || "Vacant")}</strong>
       <span class="ib-kind">${item.severity === "urgent" ? "Urgent · " : ""}${esc(item.title)}</span><p>${esc(item.reason)}</p></div>
-    <div class="ib-actions">
-      <a class="mini-btn" href="/reltix?unit=${item.unit_id}#case">Open case</a>
-      <button type="button" class="mini-btn primary" data-review-open="${esc(item.review_id)}">✓ Done</button>
+    <div class="ib-actions">${item.issue_id
+      // complaints close when someone replies to the resident (Ataberk's rule), not with a review note
+      ? `<a class="mini-btn primary" href="/reltix?unit=${item.unit_id}#reply-${esc(item.issue_id)}">Reply to resident</a>`
+      : `<a class="mini-btn" href="/reltix?unit=${item.unit_id}#case">Open case</a>
+      <button type="button" class="mini-btn primary" data-review-open="${esc(item.review_id)}">✓ Done</button>`}
     </div>
-    <form class="review-form ib-note" data-review="${esc(item.review_id)}" data-unit="${esc(item.unit_id)}" hidden>
+    ${item.issue_id ? "" : `<form class="review-form ib-note" data-review="${esc(item.review_id)}" data-unit="${esc(item.unit_id)}" hidden>
       <input name="note" maxlength="300" minlength="5" required value="Checked and handled" aria-label="What did you check or do?">
       <button class="mini-btn primary" type="submit">Save</button><span role="status" class="form-message"></span>
-    </form></div>`;
+    </form>`}</div>`;
 }
 function renderInbox() {
   const box = document.getElementById("inbox-list");
@@ -999,8 +1029,15 @@ function alertBox(message) {
 /* ---------- wiring ---------- */
 
 let syncedChoice = null;
+let syncedCycle = null;
 function syncFromCase() {
   const c = serverCase();
+  if (c.renewal_cycle && c.renewal_cycle !== syncedCycle) {
+    syncedCycle = c.renewal_cycle;
+    syncedChoice = chosenOfferId = chosenOfferVersion = null;
+    Object.assign(resident, { declined: false, consent: false, error: "", submissionId: null, selectedVersion: null });
+    renderOffers("tenant-offers", true);
+  }
   if (c.chosen_offer_id && c.chosen_offer_id !== syncedChoice) {
     syncedChoice = c.chosen_offer_id;
     const offer = offers().find((o) => o.offer_id === c.chosen_offer_id);
@@ -1066,6 +1103,7 @@ document.addEventListener("submit", async event => {
     } else {
       await post("/api/issues/reply", { unit_id: form.dataset.unit, issue_id: form.dataset.issue, role: form.dataset.assignee, reply: data.get("reply") });
       form.reset(); button.blur();
+      if (ROLE === "reltix") await loadPortfolio();
     }
     await refreshState();
   } catch (error) { feedback.textContent = error.message; }
