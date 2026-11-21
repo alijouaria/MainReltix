@@ -9,3 +9,6 @@ data/centrix/calls.json
 data/centrix/trigger_run.json
 data/centrix/demo_clock.json
 node_modules/
+data/tunnel.json
+data/cloudflared.log
+data/centrix/mia_calls.json

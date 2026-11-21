@@ -16,10 +16,11 @@ class RenewalEdgeCaseTests(unittest.TestCase):
         data = Path(stack.enter_context(tempfile.TemporaryDirectory())) / "data"
         shutil.copytree(main.ROOT / "data", data)
         for key in ("UNIT_FILE", "OFFERS_FILE", "ORDERS_FILE", "PORTFOLIO_DIR", "PORTFOLIO_SEED",
-                    "CLOCK_FILE", "RUN_FILE", "CALLS_FILE", "EVENTS_FILE"):
+                    "CLOCK_FILE", "RUN_FILE", "CALLS_FILE", "EVENTS_FILE", "REVIEWS_FILE"):
             stack.enter_context(patch.object(main, key, data / getattr(main, key).relative_to(main.ROOT / "data")))
         stack.enter_context(patch.object(main, "RESET_DATE", date(2026, 12, 1)))
         self.handler = object.__new__(main.DemoHandler)
+        self.handler.headers = {"Host": "localhost", "Origin": "http://localhost"}
         self.handler.send_json = self.capture
         self.handler.reset_demo()
 
@@ -183,6 +184,8 @@ class RenewalEdgeCaseTests(unittest.TestCase):
 
     def test_remote_and_manual_switch_reading_date_paths(self):
         remote = self.create_order(submission_id="remote-reading")
+        for role in ("tenant", "partner", "reltix"):
+            self.assertEqual(self.view(role)["orders"][0]["switch_reading_date"], "2026-12-31")
         self.order_status(remote, "received")
         self.order_status(remote, "needs_input", note="switch reading")
         self.set_day("2026-12-31")
@@ -208,6 +211,24 @@ class RenewalEdgeCaseTests(unittest.TestCase):
         self.post("run")
         requested = [e for e in main.read_events("unit_1a") if e["type"] == "reading_requested"]
         self.assertEqual(len(requested), 1)
+
+    def test_queue_keeps_unanswered_property_reports_and_prioritizes_urgent(self):
+        order = self.create_order()
+        routine = self.post("issues", unit_id="unit_1a", text="Please check the light.")["issue"]
+        urgent = self.post("issues", text="Water is entering the hallway.", urgent=True)["issue"]
+        shared = self.post("issues", text="Please confirm the date.", urgent=True,
+                           shared_order_id=order["order_id"])["issue"]
+        queue = main.portfolio_review_queue()
+        self.assertEqual(queue[0]["issue_id"], urgent["issue_id"])
+        reports = {item["issue_id"]: item for item in queue if "issue_id" in item}
+        self.assertNotIn(shared["issue_id"], reports)
+        task = reports[routine["issue_id"]]
+        self.post("reviews/" + task["review_id"], unit_id="unit_1a", note="Acknowledged")
+        self.assertEqual(self.code, 400)
+        self.post("issues/reply", unit_id="unit_1a", issue_id=routine["issue_id"],
+                  role="reltix", reply="We will check the light.")
+        self.assertEqual(self.code, 200)
+        self.assertNotIn(routine["issue_id"], [item.get("issue_id") for item in main.portfolio_review_queue()])
 
     def test_consent_is_logged_at_submission_and_retries_do_not_duplicate(self):
         offer = self.offer()
@@ -245,8 +266,14 @@ class RenewalEdgeCaseTests(unittest.TestCase):
         self.assertEqual(contract["start"], "2027-01-01")
         self.assertEqual(contract["expiry_date"], "2027-12-31")
         self.assertEqual(contract["contract_months"], 12)
+        self.assertEqual(self.view("tenant")["decision_order_id"], order["order_id"])
         self.set_day("2027-12-01")
-        self.assertTrue(self.view("tenant")["offer_available"])
+        tenant = self.view("tenant")
+        self.assertTrue(tenant["offer_available"])
+        self.assertIsNone(tenant["decision_order_id"])
+        self.assertNotIn("chosen_offer_id", tenant["case"])
+        self.assertEqual(tenant["orders"][0]["order_id"], order["order_id"])
         next_order = self.create_order(submission_id="cycle-two")
+        self.assertEqual(self.view("tenant")["decision_order_id"], next_order["order_id"])
         self.assertEqual(next_order["requested_start"], "2028-01-01")
         self.assertEqual(len(main.read_orders()), 2)

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import math
 import mimetypes
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +47,17 @@ CONNECTOR_FIELDS = {
     "iban_mandate",
 }
 DEFAULT_REQUIRED_INPUTS = ["tenant.name", "unit.address", "meter.number", "start_date"]
+CONNECTOR_FIELD_LABELS = {
+    "unit.address": "Home address", "unit.postcode": "Postcode", "unit.size_sqm": "Home size",
+    "unit.rooms": "Number of rooms", "tenant.name": "Resident name", "tenant.age_over_18": "Adult status",
+    "tenant.move_in": "Move-in date", "tenant.move_out": "Move-out date", "meter.type": "Meter type",
+    "meter.number": "Meter number", "meter.last_reading": "Last meter reading",
+    "meter.switch_reading": "Changeover meter reading", "usage.annual_kwh_estimate": "Estimated annual energy use",
+    "previous_contract.supplier": "Current supplier", "previous_contract.ends": "Current contract end date",
+    "previous_contract.monthly_price_eur": "Current monthly price", "building.year": "Building year",
+    "building.heating_type": "Heating type", "access_windows": "Access preferences",
+    "fault_summary": "Problem summary", "start_date": "Requested start date",
+}
 # Allowed partner status moves for a `sell` partner (connector spec §6). Anything else returns 409.
 TRANSITIONS = {
     "submitted": {"received", "pending", "rejected"},
@@ -56,11 +69,13 @@ TRANSITIONS = {
 HOST = "127.0.0.1"
 PORT = 8765
 RESET_DATE = None
+DEFAULT_DEMO_DATE = date(2026, 11, 20)
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:0.5b"
 
 
-ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "supplier.html", "/owner": "owner.html"}
+ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "supplier.html",
+              "/owner": "owner.html", "/privacy": "privacy.html"}
 DATA_LOCK = RLock()
 
 
@@ -84,7 +99,7 @@ def selected_electricity_meter(unit: dict, requested_id: str | None = None) -> d
 
 
 def view_for(role: str, unit: dict, partner: dict) -> dict:
-    """Return only the records a role may see (data minimisation per connector spec)."""
+    """Project sample records for each demo workspace (not an authentication boundary)."""
     contracts = unit.get("contracts", [])
     energy = next((c for c in contracts if c.get("type") == "energy_supply"), {})
     if role == "reltix":
@@ -300,6 +315,7 @@ def portfolio_review_queue() -> list[dict]:
     reviews = read_list(REVIEWS_FILE, "reviews")
     latest = {item.get("review_id"): item for item in reviews}
     pending = []
+    run_results = (read_json(RUN_FILE).get("results", []) if RUN_FILE.exists() else [])
     orders = read_orders()
     for unit_id in all_unit_ids():
         unit = read_json(unit_path(unit_id))
@@ -322,9 +338,15 @@ def portfolio_review_queue() -> list[dict]:
             pending.append(review_item(unit_id, "coverage", str(coverage.get("status")), "Review partner coverage",
                                        coverage.get("reason", "Partner coverage could not be confirmed.")))
         case = unit.get("renewal_case") or {}
-        if case.get("needs_person"):
+        if case.get("needs_person") and not any(i["unit_id"] == unit_id and i["reason"] == case["needs_person"] for i in pending):
             pending.append(review_item(unit_id, "case", str(case.get("needs_person")), "Follow up with resident",
                                        str(case["needs_person"])))
+        # Flags from today's daily check (moving out, no contact details, two contracts, unusual usage, …),
+        # unless the same reason is already in the queue as a coverage or follow-up item.
+        known = {item["reason"] for item in pending if item["unit_id"] == unit_id}
+        for row in run_results:
+            if row["unit_id"] == unit_id and row["decision"] == "attention" and row["reason"] not in known:
+                pending.append(review_item(unit_id, "flag", row["reason"], "Flagged by the daily check", row["reason"], "Daily check"))
         for order in orders:
             if order.get("subject", {}).get("unit_id") != unit_id:
                 continue
@@ -337,11 +359,16 @@ def portfolio_review_queue() -> list[dict]:
                 pending.append(review_item(unit_id, "order", f"{order['order_id']}:start_unconfirmed", "Confirm whether supply started",
                                            "The supplier has not confirmed that supply began; property team follow-up is due."))
         for issue in unit.get("issues", []):
-            if issue.get("urgent") and not issue.get("reply"):
-                pending.append(review_item(unit_id, "issue", f"{issue.get('issue_id')}:{issue.get('reported_at')}",
-                                           "Respond to urgent resident report", issue.get("text", "Urgent report needs a response."),
-                                           severity="urgent"))
-    return [item for item in pending if latest.get(item["review_id"], {}).get("status") != "reviewed"]
+            if issue.get("reply") or issue.get("owner") == "partner" or issue.get("shared_order_id"):
+                continue
+            urgent = issue.get("urgent")
+            item = review_item(unit_id, "issue", issue["issue_id"],
+                               "Respond to urgent resident report" if urgent else "Reply to resident report",
+                               issue.get("text", ""), source=issue.get("source") or "Resident report",
+                               severity="urgent" if urgent else "attention")
+            pending.append({**item, "issue_id": issue["issue_id"]})
+    outstanding = [item for item in pending if item.get("issue_id") or latest.get(item["review_id"], {}).get("status") != "reviewed"]
+    return sorted(outstanding, key=lambda item: item["severity"] != "urgent")
 
 
 def connector_profile(partner: dict) -> dict:
@@ -436,8 +463,14 @@ def partner_order_view(order: dict, partner: dict, unit: dict) -> dict:
     view["subject"] = projected
     view["partner_data"] = partner_data
     view["requested_start"] = order.get("requested_start") if "start_date" in allowed else None
-    view["previous_contract"] = {key: value for key, value in (order.get("previous_contract") or {}).items()
-                                  if key in ("supplier", "ends")}
+    if view["requested_start"] and "meter.switch_reading" in allowed and order.get("reading_required", True):
+        view["switch_reading_date"] = switch_reading_date(view["requested_start"]).isoformat()
+    previous = order.get("previous_contract") or {}
+    view["previous_contract"] = {
+        key: previous.get(key) for field, key in (("previous_contract.supplier", "supplier"),
+                                                   ("previous_contract.ends", "ends"))
+        if field in allowed
+    }
     return view
 
 
@@ -473,6 +506,12 @@ def agent_variables(unit: dict) -> dict:
     expiry = date.fromisoformat(energy["expiry_date"]) if energy.get("expiry_date") else None
     partner = read_partner()
     price = float(energy.get("current_monthly_price_eur") or 0)
+    greeting = None
+    if (unit.get("tenant") or {}).get("language") == "de" and expiry:
+        months = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        greeting = (f"Hallo {name.split(' ')[0]}, hier ist Mia, die digitale Assistentin von reltix, Ihrer Hausverwaltung. "
+                    f"Ich rufe an, weil Ihr Stromvertrag mit {energy.get('supplier', 'Ihrem Anbieter')} am {expiry.day}. {months[expiry.month - 1]} endet. "
+                    f"Haben Sie zwei Minuten?")
     return {
         "tenant_first_name": name.split(" ")[0], "tenant_last_name": " ".join(name.split(" ")[1:]),
         "full_address": unit.get("property", {}).get("address", ""), "current_supplier": energy.get("supplier", "your supplier"),
@@ -482,7 +521,8 @@ def agent_variables(unit: dict) -> dict:
         "meter_last4": str((unit.get("unit", {}).get("meters") or [{}])[0].get("number") or "")[-4:],
         "offers_summary": offers_summary(partner, price),
         "call_reason": "renewal",
-        "first_message": (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
+        "language": (unit.get("tenant") or {}).get("language", "en"),
+        "first_message": greeting or (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
                           f"I'm calling because your electricity contract with {energy.get('supplier', 'your supplier')} ends on "
                           f"{expiry.day} {expiry.strftime('%B')}. Do you have two minutes?") if expiry else
                          f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix. Do you have two minutes?",
@@ -544,7 +584,7 @@ def schedule_callback(unit_id: str, when_text: str):
     if delay is None:
         return None
     unit = read_json(unit_path(unit_id))
-    calls = read_list(CALLS_FILE, "calls")
+    calls = read_list(mia_calls_file(), "calls")
     for c in calls:  # one pending callback per flat
         if c["unit_id"] == unit_id and c.get("kind") == "callback" and c["status"] == "queued":
             c["status"] = "done"
@@ -553,8 +593,34 @@ def schedule_callback(unit_id: str, when_text: str):
     calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": (unit.get("tenant") or {}).get("name"),
                   "case": "callback", "kind": "callback", "status": "queued", "channel": "browser", "urgent": False,
                   "due_at": due_iso, "created_at": now_iso(), "history": [{"status": "queued", "at": now_iso()}]})
-    write_json(CALLS_FILE, {"calls": calls})
+    write_json(mia_calls_file(), {"calls": calls})
     return due
+
+
+def mia_calls_file() -> Path:
+    """Mia's calls to residents (renewal, callback, "call now"), kept apart from supplier follow-up calls."""
+    return CALLS_FILE.with_name("mia_calls.json")
+
+
+def next_event_date(after: date):
+    """The next demo date on which a renewal window opens (so staff can jump straight to it)."""
+    dates = []
+    for unit_id in all_unit_ids():
+        unit = read_json(unit_path(unit_id))
+        if not unit.get("tenant"):
+            continue
+        for c in unit.get("contracts", []):
+            if c.get("type") == "energy_supply" and c.get("status") == "active" and c.get("expiry_date"):
+                opens = date.fromisoformat(c["expiry_date"]) - timedelta(days=int(c.get("renewal_notice_days", 30)))
+                if opens > after:
+                    dates.append(opens)
+    return min(dates) if dates else None
+
+
+def flag(unit_id: str, text: str) -> None:
+    """Tell the property manager once (not on every daily run) that a flat needs a person."""
+    if not any(e.get("unit_id") == unit_id and e.get("text") == text for e in read_events()):
+        add_event("attention", text, "centrix", unit_id)
 
 
 def run_trigger(source: str = "scheduled") -> dict:
@@ -578,11 +644,23 @@ def run_trigger(source: str = "scheduled") -> dict:
         def decide(decision: str, reason: str) -> None:
             results.append({**row, "decision": decision, "reason": reason})
 
+        def needs_person(log_text: str, reason: str) -> None:
+            handled = unit.get("handled")
+            if handled and handled.get("reason") == reason:
+                decide("skipped", f"Handled by the property team on {handled['at'][:10]}" + (f": {handled['note']}" if handled.get("note") else "."))
+                return
+            flag(unit_id, log_text)
+            decide("attention", reason)
+
         if not tenant:
             decide("skipped", "Vacant. No resident to contact.")
             continue
         contracts = [c for c in unit.get("contracts", []) if c.get("type") == "energy_supply"]
-        energy = next((c for c in contracts if c.get("status") == "active"), None)
+        active = [c for c in contracts if c.get("status") == "active"]
+        energy = active[0] if active else None
+        if unit.get("unit", {}).get("usage") == "commercial":
+            decide("skipped", "Commercial unit. Household tariffs don't apply; business customers are out of scope.")
+            continue
         if energy is None:
             if any(c.get("order_id") or c.get("status") in ("signed", "ending") for c in contracts):
                 decide("attention", "No active supplier contract with a reliable end date. Staff must check the supply record.")
@@ -590,7 +668,8 @@ def run_trigger(source: str = "scheduled") -> dict:
                 decide("skipped", "No energy contract on record. Offer at next move-in or move-out.")
             continue
         if not energy.get("expiry_date"):
-            decide("attention", "Contract end date is missing. Staff must verify the term before offering renewal.")
+            needs_person("No end date on file for the electricity contract, so centrix can't time a renewal. Ask the resident for the contract.",
+                         "Contract end date is missing. Staff must verify the term before offering renewal.")
             continue
         expiry = date.fromisoformat(energy["expiry_date"])
         notice = int(energy.get("renewal_notice_days", 30))
@@ -601,9 +680,13 @@ def run_trigger(source: str = "scheduled") -> dict:
         if today < expiry - timedelta(days=notice):
             decide("skipped", f"Too early. Window opens {(expiry - timedelta(days=notice)).isoformat()} ({notice} days before expiry).")
             continue
+        if len(active) > 1:
+            needs_person(f"Data conflict: {len(active)} active electricity contracts on file ({', '.join(c.get('supplier', '?') for c in active)}). Fix the record before anyone is called.",
+                         f"{len(active)} active electricity contracts on file. Data conflict; no call until fixed.")
+            continue
         cycle = renewal_cycle(energy)
         open_in_cycle = any(o.get("subject", {}).get("unit_id") == unit_id
-                            and (o.get("renewal_cycle") or renewal_cycle(o.get("previous_contract", {}))) == cycle
+                            and order_cycle(o) == cycle
                             and o.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed", "active")
                             for o in existing_orders)
         if open_in_cycle:
@@ -633,20 +716,77 @@ def run_trigger(source: str = "scheduled") -> dict:
                 unit["renewal_case"].pop("needs_person", None)
             write_json(unit_path(unit_id), unit)
         meter = next((m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"), {})
+        meters = unit.get("unit", {}).get("meters", [])
+        if tenant.get("move_out") and date.fromisoformat(tenant["move_out"]) <= expiry:
+            needs_person(f"{tenant.get('name')} moves out on {tenant['move_out']}, before the contract ends on {energy['expiry_date']}. Offer the new tariff to the next tenant instead.",
+                         f"Resident moves out {tenant['move_out']}, before the contract ends. No renewal call; plan for the next tenant.")
+            continue
+        if not tenant.get("phone") and not tenant.get("email"):
+            needs_person(f"In the renewal window, but there's no phone or email for {tenant.get('name')}. Send a letter or get contact details.",
+                         "No phone or email on file. Mia can't reach the resident; letter needed.")
+            continue
+        if not meter and any(m.get("type") == "electricity_shared" for m in meters):
+            needs_person("No individual electricity meter: the flat is supplied through the building's shared meter. Renewal is the landlord's decision.",
+                         "Shared building meter, no own meter. Landlord decides; no call.")
+            continue
+        price_now = float(energy.get("current_monthly_price_eur") or 0)
+        cheapest = min((float(o.get("estimated_monthly_price_eur") or 0) for o in partner.get("offers", [])), default=0)
+        if cheapest and price_now and price_now <= cheapest:
+            decide("skipped", f"Already pays €{price_now:.2f}/month, less than the best partner offer (€{cheapest:.2f}). No call; nothing to gain.")
+            continue
+        usage = float(energy.get("annual_consumption_kwh") or 0)
+        size = float(unit.get("unit", {}).get("size_sqm") or 0)
+        if size and usage / size > 100:
+            needs_person(f"Unusual usage: {usage:,.0f} kWh a year for {size:.0f} m² ({usage / size:.0f} kWh/m², about 4× normal). Check the meter or electric heating before offering a household tariff.",
+                         f"Usage {usage:,.0f} kWh/year for {size:.0f} m² is unusually high. Check before offering a tariff; no call.")
+            continue
         notes = []
+        if tenant.get("language") == "de":
+            notes.append("resident speaks German: Mia calls in German")
         if today > expiry:
             notes.append(f"expired {(today - expiry).days} days ago, likely on a default tariff: urgent")
         if not meter.get("number"):
             notes.append("meter number missing: Mia asks for a meter photo")
         reason = f"Offer available in the tenant portal. Contract ends {energy['expiry_date']}." + (" " + "; ".join(notes) if notes else "")
+        case = unit.setdefault("renewal_case", {})
+        if case.get("renewal_cycle") != cycle:
+            prior_order = next((o for o in reversed(existing_orders) if o["subject"]["unit_id"] == unit_id), {})
+            prior_cycle = case.get("renewal_cycle") or order_cycle(prior_order)
+            if prior_cycle and prior_cycle != cycle:
+                for key in ("chosen_offer_id", "chosen_offer_version", "chosen_offer_snapshot", "declined", "declined_reason"):
+                    case.pop(key, None)
+            case["renewal_cycle"] = cycle
+            write_json(unit_path(unit_id), unit)
+        no_calls = tenant.get("contact_preference") == "no_calls"
+        reason += " Resident asked not to be called: link sent by SMS." if no_calls else " Mia calls the resident."
         decide("matched", reason)
         if (unit_id, energy["expiry_date"]) not in published:
             add_event("detected", f"Contract ends {energy['expiry_date']}. Renewal offer posted in the tenant portal.", "centrix", unit_id)
+        calls = read_list(mia_calls_file(), "calls")
+        if not any(c["unit_id"] == unit_id and c.get("case") == energy["expiry_date"] for c in calls):
+            calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": tenant.get("name"), "kind": "renewal",
+                          "case": energy["expiry_date"], "status": "sms_sent" if no_calls else "queued",
+                          "channel": "sms" if no_calls else "browser", "urgent": today > expiry, "created_at": now_iso(),
+                          "history": [{"status": "sms_sent" if no_calls else "queued", "at": now_iso()}]})
+            write_json(mia_calls_file(), {"calls": calls})
+            add_event("link" if no_calls else "call_queued", "Resident prefers no calls: portal link sent by SMS." if no_calls
+                      else f"Outbound call to {tenant.get('name')} queued for Mia.", "sms" if no_calls else "centrix", unit_id)
+    # Flags the property team already marked as handled don't come back on every run.
+    for r in results:
+        if r["decision"] == "attention":
+            handled = read_json(unit_path(r["unit_id"])).get("handled") or {}
+            if handled.get("reason") == r["reason"]:
+                r["decision"] = "skipped"
+                r["reason"] = f"Handled by the property team on {handled['at'][:10]}" + (f": {handled['note']}" if handled.get("note") else ".")
     run = {"date": today.isoformat(), "ran_at": now_iso(), "source": source, "scanned": len(results),
            "matched": sum(r["decision"] == "matched" for r in results),
            "attention": sum(r["decision"] == "attention" for r in results), "results": results}
     write_json(RUN_FILE, run)
     return run
+
+
+def switch_reading_date(requested_start: str) -> date:
+    return date.fromisoformat(requested_start) - timedelta(days=1)
 
 
 def deliver_requested_remote_readings(today: date) -> None:
@@ -667,7 +807,7 @@ def deliver_requested_remote_readings(today: date) -> None:
         meter = next((m for _, m, identity in meters if identity == selected_id), None)
         if meter is None or not meter.get("number"):
             continue
-        boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1))
+        boundary = switch_reading_date(order["requested_start"])
         sample = meter.get("demo_end_reading") or {}
         switch = order.get("subject", {}).get("meter", {}).get("switch_reading", {})
         if (today < boundary or sample.get("read_at") != boundary.isoformat()
@@ -762,6 +902,10 @@ def renewal_cycle(contract: dict) -> str | None:
     return f"{contract_id or 'legacy'}:{expiry}" if expiry else None
 
 
+def order_cycle(order: dict) -> str | None:
+    return order.get("renewal_cycle") or renewal_cycle(order.get("previous_contract", {}))
+
+
 def postcode_coverage(unit: dict, partner: dict) -> tuple[str, str | None]:
     address = str(unit.get("property", {}).get("address", ""))
     match = re.search(r"(?<!\d)(\d{5})(?!\d)", address)
@@ -809,7 +953,7 @@ def daily_order_follow_ups(today: date) -> None:
         unit_id = order.get("subject", {}).get("unit_id")
         unit = read_json(unit_path(unit_id))
         requested_start = date.fromisoformat(order["requested_start"])
-        boundary = requested_start - timedelta(days=1)
+        boundary = switch_reading_date(order["requested_start"])
         reading = order.get("subject", {}).get("meter", {}).get("switch_reading", {})
         if (order.get("status") == "needs_input" and today >= boundary
                 and reading.get("value_kwh") is None and not order.get("manual_reading_prompted")):
@@ -859,8 +1003,28 @@ def daily_order_follow_ups(today: date) -> None:
 
 
 def portal_offer_available(unit_id):
+    unit = read_json(unit_path(unit_id))
+    if not (unit.get("tenant") or {}).get("contract_sharing_opt_in", False):
+        return False
     rows = read_json(RUN_FILE)["results"] if RUN_FILE.exists() else []
-    return any(row["unit_id"] == unit_id and row["decision"] == "matched" for row in rows)
+    active = next((c for c in unit.get("contracts", []) if c.get("type") == "energy_supply" and c.get("status") == "active"), {})
+    return any(row["unit_id"] == unit_id and row["decision"] == "matched" and row.get("expiry") == active.get("expiry_date") for row in rows)
+
+
+def partner_consent_disclosure(offer: dict) -> dict:
+    """Describe the fields and standard order metadata visible in the partner workspace."""
+    required = list(offer.get("required_inputs", DEFAULT_REQUIRED_INPUTS))
+    return {
+        "required_fields": [{"key": field, "label": CONNECTOR_FIELD_LABELS.get(field, field)} for field in required],
+        "standard_fields": [
+            "Unit, order, partner and offer references",
+            "Selected offer name, price and contract term",
+            "Order status and status timestamps",
+            "Consent timestamp and the approved-field list",
+            "Contact route through Centrix when a resident name is shared",
+            "Any supplier-proposed start-date change if one occurs",
+        ],
+    }
 
 
 def reassign_shared_issues_for_order(order: dict, reason: str) -> list[str]:
@@ -900,8 +1064,29 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.end_headers()
         self.wfile.write(payload)
+
+    def local_client_only(self) -> bool:
+        """Keep this unauthenticated sample app loopback-only, even if rebound later."""
+        address = getattr(self, "client_address", ("127.0.0.1",))[0]
+        try:
+            return ipaddress.ip_address(address).is_loopback
+        except ValueError:
+            return False
+
+    def same_origin_post(self) -> bool:
+        headers = getattr(self, "headers", None) or {}   # unit tests build the handler without headers
+        origin = headers.get("Origin")
+        if origin:
+            parsed = urlparse(origin)
+            # https is the phone coming through the cloudflared tunnel (launch.py); the host must still match.
+            if parsed.scheme not in ("http", "https") or parsed.netloc.lower() != headers.get("Host", "").lower():
+                return False
+        return headers.get("Sec-Fetch-Site", "same-origin") not in ("cross-site", "none")
 
     def read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
@@ -911,6 +1096,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json.loads(raw) if raw else {}
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self.local_client_only():
+            self.send_json(403, {"error": "This sample app is available on this computer only."})
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         if path == "/phone":
@@ -962,7 +1150,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             view["following"] = following
             view["today"] = max(demo_today().isoformat(), (orders[-1].get("handover_date") or "") if orders else "")
             view["offer_available"] = portal_offer_available(unit_id)
-            view["partner"]["offers"] = [{**item, "offer_version": offer_version(item)} for item in partner.get("offers", [])]
+            view["partner"]["offers"] = [{**item, "offer_version": offer_version(item),
+                                             "consent_disclosure": partner_consent_disclosure(item)}
+                                            for item in partner.get("offers", [])]
             if role == "reltix":
                 view["data_quality"] = unit_data_quality(unit)
             if role in ("tenant", "reltix"):
@@ -970,11 +1160,22 @@ class DemoHandler(BaseHTTPRequestHandler):
             if role in ("tenant", "reltix"):
                 view["case"] = read_json(unit_path(unit_id)).get("renewal_case", {})
             if role == "tenant" and (read_json(unit_path(unit_id)).get("tenant")):
-                view["agent_variables"] = agent_variables(read_json(unit_path(unit_id)))
+                tenant_unit = read_json(unit_path(unit_id))
+                view["agent_variables"] = agent_variables(tenant_unit)
+                view["privacy_consents"] = [
+                    {key: entry.get(key) for key in ("purpose", "granted", "at", "channel", "recipient", "data_categories")}
+                    for entry in tenant_unit.get("privacy_consent_log", [])
+                ]
+            view["mia_calls"] = [c for c in read_list(mia_calls_file(), "calls") if c["unit_id"] == unit_id]
             calls = [c for c in read_list(CALLS_FILE, "calls") if c["unit_id"] == unit_id]
             view["calls"] = calls
             if role == "tenant":
                 # The resident sees their own order's progress, not the partner payload or the staff log.
+                decision_orders = orders
+                if view["offer_available"]:
+                    active = next(c for c in unit["contracts"] if c.get("type") == "energy_supply" and c.get("status") == "active")
+                    decision_orders = [o for o in orders if order_cycle(o) == renewal_cycle(active)]
+                view["decision_order_id"] = decision_orders[-1]["order_id"] if decision_orders else None
                 view["orders"] = [{key: order.get(key) for key in ("order_id", "partner", "product", "requested_start",
                                                                   "status", "status_history", "previous_contract", "reading_required",
                                                                   "meter_id", "start_unconfirmed", "proposed_start_date", "start_date_mismatch",
@@ -988,7 +1189,16 @@ class DemoHandler(BaseHTTPRequestHandler):
             else:
                 view["orders"] = orders
                 view["events"] = read_events(unit_id)
+            for order in view["orders"]:
+                if order.get("requested_start") and order.get("reading_required", True):
+                    order["switch_reading_date"] = switch_reading_date(order["requested_start"]).isoformat()
             self.send_json(200, view)
+            return
+        if path == "/api/tunnel":
+            # Written by launch.py when the cloudflared phone link is up.
+            tunnel = ROOT / "data" / "tunnel.json"
+            fresh = tunnel.exists() and time.time() - tunnel.stat().st_mtime < 20   # launch.py refreshes it every 5 s
+            self.send_json(200, {"url": read_json(tunnel).get("url") if fresh else None})
             return
         if path == "/api/portfolio":
             run = read_json(RUN_FILE) if RUN_FILE.exists() else None
@@ -1006,19 +1216,39 @@ class DemoHandler(BaseHTTPRequestHandler):
                     "issues_urgent": sum(bool(i.get("urgent")) and not i.get("reply") for i in issues),
                     "support_calls": len(issues) + sum(s.get("channel") == "phone" for o in orders for s in o["status_history"])
                                      + sum(bool(i.get("reply") and i.get("shared_order_id")) for i in issues)}
-            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "kpis": kpis,
+            names = {}
+            inbox = []
+            for uid in all_unit_ids():
+                u = read_json(unit_path(uid))
+                names[uid] = (u.get("tenant") or {}).get("name") or "Vacant"
+                for i in u.get("issues", []):
+                    if not i.get("reply") and not i.get("handled"):
+                        inbox.append({"kind": "issue", "unit_id": uid, "tenant": names[uid], "urgent": bool(i.get("urgent")),
+                                      "issue_id": i.get("issue_id"), "text": i.get("text"), "at": i.get("reported_at")})
+                need = (u.get("renewal_case") or {}).get("needs_person")
+                flagged = any(r["unit_id"] == uid and r["decision"] == "attention" and r["reason"] == need for r in (run or {}).get("results", []))
+                if need and not flagged and not (u.get("renewal_case") or {}).get("needs_person_handled"):
+                    inbox.append({"kind": "needs_person", "unit_id": uid, "tenant": names[uid], "urgent": False, "text": need,
+                                  "at": (u.get("renewal_case") or {}).get("updated_at")})
+            for r in (run or {}).get("results", []):
+                if r["decision"] == "attention":
+                    inbox.append({"kind": "flag", "unit_id": r["unit_id"], "tenant": r.get("tenant") or "Vacant", "urgent": False,
+                                  "text": r["reason"], "at": (run or {}).get("ran_at")})
+            inbox.sort(key=lambda x: (not x["urgent"], x["kind"] != "issue"))
+            feed = [{**e, "tenant": names.get(e.get("unit_id"), "")} for e in read_events()
+                    if e.get("channel") != "centrix"][-20:]
+            nxt = next_event_date(demo_today())
+            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "mia_calls": read_list(mia_calls_file(), "calls"), "kpis": kpis,
+                                 "inbox": inbox, "feed": feed, "next_event": nxt.isoformat() if nxt else None,
                                  "supplier_followups": [c for c in read_list(CALLS_FILE, "calls")
                                                         if c.get("kind") == "supplier_follow_up" and c.get("status") != "done"],
                                  "review_queue": portfolio_review_queue(),
                                  "phone_ready": phone_ready(), "auto_dial_on": bool(os.environ.get("DEMO_PHONE_NUMBER")) and phone_ready()})
             return
         if path.startswith("/api/orders/"):
-            order_id = path.rsplit("/", 1)[-1]
-            order = next((item for item in read_orders() if item.get("order_id") == order_id), None)
-            if order is None:
-                self.send_json(404, {"error": "Unknown order."})
-                return
-            self.send_json(200, {"order": order})
+            # There is no authenticated order-detail API in this local demo. Order
+            # details are exposed only through the deliberately projected role views.
+            self.send_json(404, {"error": "Use the role-specific demo view for order status."})
             return
 
         relative = "index.html" if path == "/" else ROLE_PAGES.get(path) or unquote(path.lstrip("/"))
@@ -1037,10 +1267,19 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.end_headers()
         self.wfile.write(payload)
 
     def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self.local_client_only():
+            self.send_json(403, {"error": "This sample app is available on this computer only."})
+            return
+        if not self.same_origin_post():
+            self.send_json(403, {"error": "Cross-origin requests are not allowed."})
+            return
         # Case, order and event updates are read/modify/write operations shared by the role pages.
         if urlparse(self.path).path == "/api/chat":
             self.dispatch_post()
@@ -1073,10 +1312,24 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True})
             elif path == "/api/case":
                 self.update_case(body)
+            elif path == "/api/privacy/consent":
+                self.update_privacy_consent(body)
             elif path == "/api/clock":
-                today = date.fromisoformat(str(body.get("today")))
+                step = str(body.get("advance", ""))
+                if step == "next":
+                    today = next_event_date(demo_today())
+                    if today is None:
+                        raise ValueError("Nothing else is scheduled.")
+                elif step in ("day", "week"):
+                    today = demo_today() + timedelta(days=1 if step == "day" else 7)
+                else:
+                    today = date.fromisoformat(str(body.get("today")))
                 write_json(CLOCK_FILE, {"today": today.isoformat()})
                 self.send_json(200, {"ok": True, "run": run_trigger("date changed")})
+            elif path == "/api/handled":
+                self.mark_handled(body)
+            elif path == "/api/calls":
+                self.call_now(body)
             elif path == "/api/run":
                 self.send_json(200, {"ok": True, "run": run_trigger("manual")})
             elif re.fullmatch(r"/api/calls/call_[a-z0-9]+/phone", path):
@@ -1120,7 +1373,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                    and (o.get("meter_id") or o.get("subject", {}).get("meter", {}).get("meter_id")) == chosen_meter_id
                    and o["status"] in ("submitted", "received", "needs_input", "confirmed")]
         for order in pending:
-            boundary = (date.fromisoformat(order["requested_start"]) - timedelta(days=1)).isoformat()
+            boundary = switch_reading_date(order["requested_start"]).isoformat()
             if reading_date != boundary:
                 raise ValueError(f"Enter the switch reading taken on {boundary}.")
         meter["meter_id"] = chosen_meter_id
@@ -1244,7 +1497,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(UNIT_FILE, read_json(UNIT_FILE.with_suffix(".seed.json")))
         for seed in PORTFOLIO_SEED.glob("unit_*.json"):
             write_json(PORTFOLIO_DIR / seed.name, read_json(seed))
-        for path in (CALLS_FILE, RUN_FILE, CLOCK_FILE, REVIEWS_FILE):
+        for path in (CALLS_FILE, mia_calls_file(), RUN_FILE, CLOCK_FILE, REVIEWS_FILE):
             path.unlink(missing_ok=True)
         if RESET_DATE:
             write_json(CLOCK_FILE, {"today": RESET_DATE.isoformat()})
@@ -1261,6 +1514,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             raise ValueError("A unit_id is required to record this review.")
         task = next((item for item in portfolio_review_queue() if item["review_id"] == review_id
                      and item["unit_id"] == unit_id), None)
+        if task and task.get("issue_id"):
+            raise ValueError("Send a reply to resolve this resident report.")
         if task is None:
             self.send_json(409, {"error": "This review item changed or has already been reviewed. Refresh the queue."})
             return
@@ -1278,12 +1533,20 @@ class DemoHandler(BaseHTTPRequestHandler):
                 fields[field] = {"source": f"Property team review: {note}"[:100], "verified_at": reviewed_at,
                                  "recorded_at": reviewed_at, "value_hash": _value_hash(current_values.get(field))}
             write_json(provenance, unit)
+        if task["category"] in ("flag", "coverage", "case"):
+            unit = read_json(unit_path(unit_id))
+            unit["handled"] = {"at": reviewed_at, "reason": task["reason"], "note": note}
+            if (unit.get("renewal_case") or {}).get("needs_person") == task["reason"]:
+                unit["renewal_case"]["needs_person_handled"] = reviewed_at
+            write_json(unit_path(unit_id), unit)
         reviews = read_list(REVIEWS_FILE, "reviews")
         record = {"review_id": review_id, "unit_id": unit_id, "status": "reviewed", "note": note,
                   "reviewed_by": "Property team", "reviewed_at": reviewed_at, "category": task["category"]}
         reviews.append(record)
         write_json(REVIEWS_FILE, {"reviews": reviews[-1000:]})
         add_event("staff_review", f"{task['title']}: {note}", "property team", unit_id)
+        if task["category"] in ("flag", "coverage", "case"):
+            run_trigger("review recorded")   # the flat's row shows it was handled right away
         self.send_json(200, {"review": record})
 
     def update_case(self, body: dict) -> None:
@@ -1334,6 +1597,58 @@ class DemoHandler(BaseHTTPRequestHandler):
         write_json(path, unit)
         add_event("case", f"Resident {'; '.join(changes)}.", source, unit_id)
         self.send_json(200, {"case": case})
+
+    def update_privacy_consent(self, body: dict) -> None:
+        """Record a resident's contract-sharing preference or per-call voice consent."""
+        unit_id = str(body.get("unit_id", "unit_4b"))
+        path = unit_path(unit_id)
+        unit = read_json(path)
+        purpose = str(body.get("purpose", ""))
+        granted = body.get("granted")
+        if not isinstance(granted, bool):
+            raise ValueError("Consent must be true or false.")
+        if purpose == "contract_sharing":
+            tenant = unit.setdefault("tenant", {})
+            tenant["contract_sharing_opt_in"] = granted
+            entry = {"purpose": purpose, "granted": granted, "at": now_iso(), "channel": "tenant_portal",
+                     "resident_contact_id": tenant.get("contact_id")}
+            if not granted:
+                case = unit.setdefault("renewal_case", {})
+                case.pop("chosen_offer_id", None)
+                case.pop("chosen_offer_version", None)
+                case.pop("chosen_offer_snapshot", None)
+                case["declined"] = False
+            message = "Resident enabled contract sharing for renewal checks." if granted else \
+                      "Resident withdrew contract sharing for future renewal checks."
+        elif purpose == "outbound_phone":
+            tenant = unit.setdefault("tenant", {})
+            tenant["outbound_phone_opt_in"] = granted
+            entry = {"purpose": purpose, "granted": granted, "at": now_iso(), "channel": "tenant_portal",
+                     "recipient": "ElevenLabs and Twilio", "data_categories": ["phone number", "resident name",
+                         "home address", "current supplier", "energy plan", "monthly price", "expiry date",
+                         "last four meter digits", "available offers"],
+                     "resident_contact_id": tenant.get("contact_id")}
+            message = "Resident enabled outbound AI phone calls." if granted else \
+                      "Resident withdrew consent for outbound AI phone calls."
+        elif purpose == "live_voice" and granted is True:
+            entry = {"purpose": purpose, "granted": True, "at": now_iso(), "channel": "tenant_portal",
+                     "recipient": "ElevenLabs", "data_categories": ["microphone audio", "conversation", "resident name",
+                         "home address", "energy contract details", "offer details", "last four meter digits"],
+                     "resident_contact_id": (unit.get("tenant") or {}).get("contact_id")}
+            message = "Resident consented to an ElevenLabs live voice session."
+        else:
+            raise ValueError("Unknown consent purpose.")
+        history = unit.setdefault("privacy_consent_log", [])
+        history.append(entry)
+        unit["privacy_consent_log"] = history[-500:]
+        write_json(path, unit)
+        add_event("privacy_consent", message, "tenant_portal", unit_id)
+        if purpose == "contract_sharing":
+            run_trigger("contract sharing preference changed")
+        self.send_json(200, {"consent": entry, "contract_sharing_opt_in":
+                             (unit.get("tenant") or {}).get("contract_sharing_opt_in", False),
+                             "outbound_phone_opt_in": (unit.get("tenant") or {}).get("outbound_phone_opt_in", False),
+                             "offer_available": portal_offer_available(unit_id)})
 
     def report_issue(self, body: dict) -> None:
         """A resident reports a problem at home (via Mia or the portal). New issue, or update one by issue_id."""
@@ -1412,20 +1727,73 @@ class DemoHandler(BaseHTTPRequestHandler):
         add_event("issue_reply", issue["reply"], channel, unit["unit_id"])
         self.send_json(200, {"issue": issue})
 
+    def mark_handled(self, body: dict) -> None:
+        """Staff clears an item from "Needs you": a flag from the daily run, a complaint, or a request for a person."""
+        unit_id = str(body.get("unit_id", ""))
+        path = unit_path(unit_id)
+        unit = read_json(path)
+        note = str(body.get("note", "")).strip()[:160]
+        kind = str(body.get("kind", "flag"))
+        if kind == "issue":
+            issue = next((i for i in unit.get("issues", []) if i.get("issue_id") == body.get("issue_id")), None)
+            if issue is None:
+                raise ValueError("Unknown complaint.")
+            issue["handled"] = {"at": now_iso(), "note": note}
+            text = f"Complaint handled by the property team{': ' + note if note else ''}."
+        elif kind == "needs_person":
+            unit.setdefault("renewal_case", {})["needs_person_handled"] = now_iso()
+            text = f"Request for a person handled{': ' + note if note else ''}."
+        else:
+            run = read_json(RUN_FILE) if RUN_FILE.exists() else {}
+            row = next((r for r in run.get("results", []) if r["unit_id"] == unit_id and r["decision"] == "attention"), None)
+            if row is None:
+                raise ValueError("Nothing to handle for this flat.")
+            unit["handled"] = {"at": now_iso(), "reason": row["reason"], "note": note}
+            if (unit.get("renewal_case") or {}).get("needs_person") == row["reason"]:
+                unit["renewal_case"]["needs_person_handled"] = now_iso()
+            text = f"Flag handled by the property team{': ' + note if note else ''}."
+        write_json(path, unit)
+        add_event("handled", text, "staff", unit_id)
+        if kind == "flag":
+            run_trigger("flag handled")
+        self.send_json(200, {"ok": True})
+
+    def call_now(self, body: dict) -> None:
+        """Staff asks Mia to call a resident right away (rings on the resident's page)."""
+        unit_id = str(body.get("unit_id", ""))
+        unit = read_json(unit_path(unit_id))
+        tenant = unit.get("tenant") or {}
+        if not tenant:
+            raise ValueError("No resident lives in this flat.")
+        calls = read_list(mia_calls_file(), "calls")
+        if any(c["unit_id"] == unit_id and c.get("kind") in ("renewal", "callback", "manual") and c["status"] in ("queued", "ringing") for c in calls):
+            raise ValueError("Mia is already calling this resident.")
+        calls.append({"call_id": "call_" + uuid.uuid4().hex[:6], "unit_id": unit_id, "tenant": tenant.get("name"), "kind": "manual",
+                      "case": "manual", "status": "queued", "channel": "browser", "urgent": False, "created_at": now_iso(),
+                      "history": [{"status": "queued", "at": now_iso()}]})
+        write_json(mia_calls_file(), {"calls": calls})
+        add_event("call_queued", f"Staff asked Mia to call {tenant.get('name')} now.", "staff", unit_id)
+        self.send_json(200, {"ok": True})
+
     def update_call(self, call_id: str, body: dict) -> None:
         """The resident's phone/browser reports what happened to an outbound call."""
         status = str(body.get("status", ""))
         if status not in ("ringing", "answered", "missed", "declined", "done"):
             raise ValueError("Unknown call status.")
-        calls = read_list(CALLS_FILE, "calls")
+        source = mia_calls_file()
+        calls = read_list(source, "calls")
         call = next((c for c in calls if c["call_id"] == call_id), None)
+        if call is None:
+            source = CALLS_FILE
+            calls = read_list(source, "calls")
+            call = next((c for c in calls if c["call_id"] == call_id), None)
         if call is None:
             self.send_json(404, {"error": "Unknown call."})
             return
         if call["status"] != status:
             call["status"] = status
             call["history"].append({"status": status, "at": now_iso()})
-            write_json(CALLS_FILE, {"calls": calls})
+            write_json(source, {"calls": calls})
             text = {"answered": f"{call['tenant']} answered Mia's call.", "missed": f"{call['tenant']} didn't answer. SMS link sent instead.",
                     "declined": f"{call['tenant']} declined the call. SMS link sent instead.", "done": "Call ended."}.get(status)
             if text:
@@ -1434,14 +1802,25 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def phone_call(self, call_id: str, body: dict) -> None:
         """Optional: Mia calls a real phone (needs ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID)."""
-        if not phone_ready():
-            self.send_json(400, {"error": "Phone calls aren't set up. See README: ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID."})
-            return
         call = next((c for c in read_list(CALLS_FILE, "calls") if c["call_id"] == call_id), None)
         if call is None:
             self.send_json(404, {"error": "Unknown call."})
             return
-        ok, message = place_phone_call(call, str(body.get("to_number") or os.environ.get("DEMO_PHONE_NUMBER", "")))
+        unit = read_json(unit_path(call["unit_id"]))
+        if not unit or not (unit.get("tenant") or {}).get("outbound_phone_opt_in", False):
+            self.send_json(403, {"error": "The resident has not enabled outbound AI phone calls."})
+            return
+        if not phone_ready():
+            self.send_json(400, {"error": "Phone calls aren't set up. See README: ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID."})
+            return
+        tenant = unit.get("tenant") or {}
+        configured_number = str(os.environ.get("DEMO_PHONE_NUMBER") or tenant.get("phone") or "")
+        requested_number = str(body.get("to_number") or configured_number)
+        normalize_number = lambda value: re.sub(r"[^+0-9]", "", value)
+        if not configured_number or normalize_number(requested_number) != normalize_number(configured_number):
+            self.send_json(403, {"error": "Outbound calls can only use the resident number on file or the configured demo number."})
+            return
+        ok, message = place_phone_call(call, configured_number)
         self.send_json(200 if ok else 502, {"ok": ok, "message": message} if ok else {"error": message})
 
     def create_order(self, body: dict) -> None:
@@ -1495,13 +1874,13 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"order": retry, "replayed": True})
                 return
         duplicate = next((item for item in orders if item.get("subject", {}).get("unit_id") == unit_id
-                          and (item.get("renewal_cycle") or renewal_cycle(item.get("previous_contract", {}))) == cycle
+                          and order_cycle(item) == cycle
                           and item.get("status") in ("submitted", "received", "pending", "needs_input", "confirmed", "active")), None)
         if duplicate:
             raise ValueError("An order for this renewal is already on file.")
         # Day after the old contract ends; if it already ended (urgent case), the next day from today.
         requested_start = max(date.fromisoformat(expiry) + timedelta(days=1), demo_today() + timedelta(days=1)).isoformat() if expiry else None
-        boundary = (date.fromisoformat(requested_start) - timedelta(days=1)).isoformat()
+        boundary = switch_reading_date(requested_start).isoformat()
         if reading.get("value_kwh") is None and meter.get("last_reading", {}).get("read_at") == boundary:
             reading = meter["last_reading"]
         if reading.get("read_at") != boundary:
@@ -1648,7 +2027,7 @@ class DemoHandler(BaseHTTPRequestHandler):
             if meter is None:
                 raise ValueError("The selected electricity meter is no longer on file.")
             order["subject"]["meter"].update(meter_id=selected_id, number=meter.get("number"))
-            order["handover_date"] = (start - timedelta(days=1)).isoformat()
+            order["handover_date"] = switch_reading_date(start.isoformat()).isoformat()
         if new_status == "active":
             order["handover_date"] = order["requested_start"]
         order["status_history"].append(entry)
@@ -1917,13 +2296,14 @@ class DemoHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--demo-date", type=date.fromisoformat)
+    parser.add_argument("--demo-date", type=date.fromisoformat, help="Demo day to start on and to return to on reset (default 2026-11-20)")
     args = parser.parse_args()
-    RESET_DATE = args.demo_date
-    if args.demo_date:
-        write_json(CLOCK_FILE, {"today": args.demo_date.isoformat()})
+    # A fixed demo calendar, so the scenarios in DEMO.md happen on the same dates whatever day we present.
+    RESET_DATE = args.demo_date or DEFAULT_DEMO_DATE
+    if args.demo_date or not CLOCK_FILE.exists():
+        write_json(CLOCK_FILE, {"today": RESET_DATE.isoformat()})
     run = run_trigger("server start")
-    print(f"Daily trigger run for {run['date']}: {run['scanned']} units scanned, {run['matched']} portal offers.")
+    print(f"Demo date {run['date']}: {run['scanned']} flats checked, {run['matched']} renewals (Mia calls), {run['attention']} need a person.")
     server = ThreadingHTTPServer((HOST, args.port), DemoHandler)
     print(f"Reltix demo is running at http://{HOST}:{server.server_port}")
     print("Press Ctrl+C to stop it.")

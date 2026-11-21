@@ -1,0 +1,80 @@
+{
+  "unit_id": "unit_20b",
+  "property": {
+    "address": "Krefelder Straße 31, 52069 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 0,
+    "size_sqm": 62,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740519",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_o7",
+    "name": "Immobilien Aachen GmbH"
+  },
+  "tenant": {
+    "contact_id": "c_407",
+    "name": "Sarah Klein",
+    "email": "sarah@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2025-08-01",
+    "contract_sharing_opt_in": true
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 681,
+      "start": "2025-08-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_20b",
+      "customer_contact_id": "c_407",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2640,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2027-01-05",
+      "current_monthly_price_eur": 91.45
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_20b_b",
+      "customer_contact_id": "c_407",
+      "supplier": "Stadtwerke Aachen",
+      "product": "Komfort Strom",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 2640,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2027-01-05",
+      "current_monthly_price_eur": 91.2
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "unit_id": "unit_26b",
+  "property": {
+    "address": "Burtscheider Markt 49, 52063 Aachen",
+    "building_year": 1972,
+    "heating": "gas central heating",
+    "energy_certificate": {
+      "class": "E",
+      "valid_until": "2029-03-31"
+    }
+  },
+  "unit": {
+    "floor": 1,
+    "size_sqm": 62,
+    "rooms": 3,
+    "meters": [
+      {
+        "type": "electricity",
+        "number": "1ESY1163740621",
+        "last_reading": {
+          "value_kwh": 16020,
+          "read_at": "2026-10-31"
+        },
+        "switch_reading": {
+          "value_kwh": null,
+          "read_at": null
+        }
+      }
+    ]
+  },
+  "owner": {
+    "contact_id": "c_o13",
+    "name": "Stefan Wolf"
+  },
+  "tenant": {
+    "contact_id": "c_413",
+    "name": "Helga Schmidt",
+    "email": "helga@example.com",
+    "phone": "+49 151 00000000",
+    "move_in": "2023-05-01",
+    "contract_sharing_opt_in": true,
+    "language": "de"
+  },
+  "contracts": [
+    {
+      "type": "lease",
+      "rent_cold_eur": 819,
+      "start": "2023-05-01"
+    },
+    {
+      "type": "energy_supply",
+      "category": "electricity",
+      "contract_id": "energy_unit_26b",
+      "customer_contact_id": "c_413",
+      "supplier": "Demo Stadtenergie",
+      "product": "Basic Electricity 12",
+      "status": "active",
+      "start": "2025-01-01",
+      "renewal_notice_days": 30,
+      "annual_consumption_kwh": 3360,
+      "meter_reading_required_at_switch": true,
+      "expiry_date": "2027-02-05",
+      "current_monthly_price_eur": 99.55
+    }
+  ]
+}

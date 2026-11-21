@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy and data · Reltix demo</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""></a>
+    <span class="role-label">Privacy and data</span>
+  </header>
+  <main class="main-area">
+    <article class="message-card">
+      <span class="eyebrow">Local demonstration</span>
+      <h1>How this demo handles data</h1>
+      <p class="lead">This app is for a local walkthrough with synthetic sample records. Do not enter real tenant or customer information.</p>
+
+      <h2>What is stored</h2>
+      <p>Renewal choices, consent records, meter details, complaints, replies, orders and workflow history are saved as JSON files under the project’s <code>data/centrix/</code> folder. The files are not encrypted by the demo. Anyone who can read the project folder or use the same computer can inspect them.</p>
+
+      <h2>Sharing and assistants</h2>
+      <ul>
+        <li>Renewal matching uses current contract details only while contract sharing is switched on. You can switch it off in the tenant portal; that stops future checks and new orders. An order already sent is not cancelled by withdrawing this preference.</li>
+        <li>The supplier workspace is a local simulation. This demo does not send renewal orders to an external supplier API.</li>
+        <li>The optional live voice call sends microphone audio, conversation, resident name, home address, current energy contract and expiry, offer details, and the last four meter digits to ElevenLabs. No voice data is sent unless you check the consent box and start a call.</li>
+        <li>Optional outbound AI phone calls are disabled unless you enable them in tenant privacy preferences. If enabled, the phone number, resident name, address, current supplier, plan, price, expiry, last four meter digits, and available offers are sent through the configured ElevenLabs and Twilio services.</li>
+        <li>The optional chat sends the selected unit facts and recent messages to an Ollama service on this computer. Chat history is held in the browser while the page is open.</li>
+        <li>Complaints go to the local property-team view. A complaint is shared with the simulated supplier only after you choose to share it.</li>
+      </ul>
+
+      <h2>Access and retention</h2>
+      <p>The server listens on this computer only and rejects requests from other computers. The workspaces are role simulations, not user accounts or security boundaries; anyone using this local demo can open another workspace. Do not use it to process real personal data.</p>
+      <p>Demo records stay in the local JSON files until “Reset all demo data” restores the sample records and clears demo orders, calls, reviews and event history. The demo has no automatic retention timer.</p>
+
+      <h2>Cookies and analytics</h2>
+      <p>The app includes no analytics or ad tracking. The bundled voice client can save a diagnostic log-level preference in local storage and may fall back to a first-party cookie if local storage is unavailable.</p>
+      <p><a href="/">Return to the demo</a></p>
+    </article>
+  </main>
+</body>
+</html>
