@@ -150,8 +150,9 @@ const clientTools = {
   },
   // Memory: Mia can look up what this resident chose, signed, reported or asked for, as it stands right now.
   get_customer_status: async () => {
-    await freshState();
-    return state.agent_variables?.customer_status || "No record for this resident.";
+    const fresh = await freshState();
+    const status = state.agent_variables?.customer_status || "No record for this resident.";
+    return fresh ? status : `${status} (Could not refresh; this may be a few minutes old.)`;
   },
   // The resident says a problem they reported is fixed: close that complaint.
   resolve_issue: async ({ issue_id, note }) => resolveIssue(issue_id, note),
@@ -209,14 +210,20 @@ async function reportIssue({ text = "", urgent = false, reason = "" }) {
   if (!call.pendingEvent || call.pendingEvent.payload !== normalized) {
     call.pendingEvent = { payload: normalized, id: `${call.sessionId}-${++call.eventNumber}` };
   }
-  try {
-    const { issue } = await post("/api/issues", { unit_id: UNIT, source: "voice", issue_id: call.issueId, text, urgent, reason,
-      call_session_id: call.sessionId, client_event_id: call.pendingEvent.id });
-    call.issueId = issue.issue_id;
-    call.pendingEvent = null;
-    freshState();
-    return issue.urgent ? "Sent to the property team as urgent. A person will contact them soon." : "Problem sent to the property team.";
-  } catch (error) { return `Couldn't save it: ${error.message}`; }
+  // Same event id on every retry, so the server never stores it twice.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const { issue } = await post("/api/issues", { unit_id: UNIT, source: "voice", issue_id: call.issueId, text, urgent, reason,
+        call_session_id: call.sessionId, client_event_id: call.pendingEvent.id });
+      call.issueId = issue.issue_id;
+      call.pendingEvent = null;
+      freshState();
+      return issue.urgent ? `Saved as urgent complaint ${issue.issue_id}. The property team will contact them soon.` : `Saved as complaint ${issue.issue_id} for the property team.`;
+    } catch (error) {
+      if (attempt === 3) return `NOT SAVED (${error.message}). Tell the resident you couldn't log it and they should report it in the portal.`;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
 }
 
 async function recoverDroppedCall() {

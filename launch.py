@@ -56,6 +56,39 @@ def responds(url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def this_version() -> str:
+    import hashlib
+    digest = hashlib.sha1()
+    for name in ("main.py", "web/flow.js", "web/app.js"):
+        try:
+            digest.update((ROOT / name).read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:12]
+
+
+def running_version() -> str | None:
+    try:
+        with urllib.request.urlopen(LOCAL + "/api/version", timeout=2) as res:
+            return json.load(res).get("version")
+    except Exception:
+        return None   # very old copies don't have /api/version
+
+
+def stop_running() -> None:
+    try:
+        req = urllib.request.Request(LOCAL + "/api/shutdown", data=b"{}", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass
+    for _ in range(40):
+        if not responds(LOCAL + "/api/portfolio", timeout=0.5):
+            return
+        time.sleep(0.25)
+    print("Couldn't stop it. Close the other Reltix window (or VS Code terminal running main.py), then start again.")
+    sys.exit(1)
+
+
 def copy_to_clipboard(text: str) -> bool:
     try:
         if sys.platform == "win32":
@@ -83,10 +116,14 @@ def main() -> int:
     TUNNEL_FILE.unlink(missing_ok=True)
     procs: list[subprocess.Popen] = []
 
-    if responds(LOCAL + "/api/portfolio"):
-        print("Reltix is already running on this laptop (another window?). Using that one.")
-        print("If that's an old version, close the other window and start again.\n")
+    if responds(LOCAL + "/api/portfolio") and running_version() == this_version():
+        print("Reltix (this version) is already running on this laptop. Using that one.\n")
     else:
+        if responds(LOCAL + "/api/portfolio"):
+            # An older copy (another folder or an earlier download) is still running: stop it, or the
+            # browser and phone would keep talking to the old code.
+            print("An older Reltix is still running. Stopping it...", flush=True)
+            stop_running()
         print("Starting Reltix...", flush=True)
         procs.append(subprocess.Popen([sys.executable, str(ROOT / "main.py"), *sys.argv[1:]], cwd=ROOT))
         for _ in range(60):

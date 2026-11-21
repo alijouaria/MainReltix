@@ -80,6 +80,21 @@ ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "
 DATA_LOCK = RLock()
 
 
+def code_version(root: Path | None = None) -> str:
+    """Fingerprint of this copy of the app, so launch.py can tell an old server from this one."""
+    root = root or Path(__file__).resolve().parent
+    digest = hashlib.sha1()
+    for name in ("main.py", "web/flow.js", "web/app.js"):
+        try:
+            digest.update((root / name).read_bytes())
+        except OSError:
+            pass
+    return digest.hexdigest()[:12]
+
+
+CODE_VERSION = code_version()
+
+
 def meter_id(unit_id: str, meter: dict, index: int) -> str:
     """Stable per-unit identifier, even when a meter number has not been recorded yet."""
     return str(meter.get("meter_id") or f"{unit_id}:{meter.get('type', 'meter')}:{index + 1}")
@@ -951,7 +966,7 @@ def assign_offer_ids(offers: list, previous: list | None = None) -> list:
 
 def read_partner() -> dict:
     """Load a validated connector profile, retaining compatibility with legacy offers."""
-    partner = json.loads(OFFERS_FILE.read_text(encoding="utf-8-sig"))
+    partner = read_json(OFFERS_FILE)
     normalized = connector_profile(partner)
     if normalized != partner:
         partner = normalized
@@ -1257,6 +1272,9 @@ class DemoHandler(BaseHTTPRequestHandler):
                     order["switch_reading_date"] = switch_reading_date(order["requested_start"]).isoformat()
             self.send_json(200, view)
             return
+        if path == "/api/version":
+            self.send_json(200, {"version": CODE_VERSION, "root": str(ROOT)})
+            return
         if path == "/api/tunnel":
             # Written by launch.py when the cloudflared phone link is up.
             tunnel = ROOT / "data" / "tunnel.json"
@@ -1367,6 +1385,11 @@ class DemoHandler(BaseHTTPRequestHandler):
         # Case, order and event updates are read/modify/write operations shared by the role pages.
         if urlparse(self.path).path == "/api/chat":
             self.dispatch_post()
+            return
+        if urlparse(self.path).path == "/api/shutdown":
+            # launch.py stops an older copy of the app before starting this one
+            self.send_json(200, {"ok": True})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
         with DATA_LOCK:
             self.dispatch_post()
@@ -2379,8 +2402,18 @@ class DemoHandler(BaseHTTPRequestHandler):
             )
         return None
 
+    def log_request(self, code: object = "-", size: object = "-") -> None:
+        # Pages poll every few seconds. Printing every request floods the Windows console, and while
+        # someone selects text in that window, printing blocks and the whole app stops answering.
+        if str(code).isdigit() and int(code) < 400:
+            return
+        super().log_request(code, size)
+
     def log_message(self, format: str, *args: object) -> None:
-        print(f"{self.address_string()} - {format % args}")
+        try:
+            print(f"{self.address_string()} - {format % args}", flush=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
