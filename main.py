@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import math
 import mimetypes
@@ -45,6 +46,17 @@ CONNECTOR_FIELDS = {
     "iban_mandate",
 }
 DEFAULT_REQUIRED_INPUTS = ["tenant.name", "unit.address", "meter.number", "start_date"]
+CONNECTOR_FIELD_LABELS = {
+    "unit.address": "Home address", "unit.postcode": "Postcode", "unit.size_sqm": "Home size",
+    "unit.rooms": "Number of rooms", "tenant.name": "Resident name", "tenant.age_over_18": "Adult status",
+    "tenant.move_in": "Move-in date", "tenant.move_out": "Move-out date", "meter.type": "Meter type",
+    "meter.number": "Meter number", "meter.last_reading": "Last meter reading",
+    "meter.switch_reading": "Changeover meter reading", "usage.annual_kwh_estimate": "Estimated annual energy use",
+    "previous_contract.supplier": "Current supplier", "previous_contract.ends": "Current contract end date",
+    "previous_contract.monthly_price_eur": "Current monthly price", "building.year": "Building year",
+    "building.heating_type": "Heating type", "access_windows": "Access preferences",
+    "fault_summary": "Problem summary", "start_date": "Requested start date",
+}
 # Allowed partner status moves for a `sell` partner (connector spec §6). Anything else returns 409.
 TRANSITIONS = {
     "submitted": {"received", "pending", "rejected"},
@@ -60,7 +72,8 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:0.5b"
 
 
-ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "supplier.html", "/owner": "owner.html"}
+ROLE_PAGES = {"/tenant": "tenant.html", "/reltix": "reltix.html", "/supplier": "supplier.html",
+              "/owner": "owner.html", "/privacy": "privacy.html"}
 DATA_LOCK = RLock()
 
 
@@ -84,7 +97,7 @@ def selected_electricity_meter(unit: dict, requested_id: str | None = None) -> d
 
 
 def view_for(role: str, unit: dict, partner: dict) -> dict:
-    """Return only the records a role may see (data minimisation per connector spec)."""
+    """Project sample records for each demo workspace (not an authentication boundary)."""
     contracts = unit.get("contracts", [])
     energy = next((c for c in contracts if c.get("type") == "energy_supply"), {})
     if role == "reltix":
@@ -436,8 +449,12 @@ def partner_order_view(order: dict, partner: dict, unit: dict) -> dict:
     view["subject"] = projected
     view["partner_data"] = partner_data
     view["requested_start"] = order.get("requested_start") if "start_date" in allowed else None
-    view["previous_contract"] = {key: value for key, value in (order.get("previous_contract") or {}).items()
-                                  if key in ("supplier", "ends")}
+    previous = order.get("previous_contract") or {}
+    view["previous_contract"] = {
+        key: previous.get(key) for field, key in (("previous_contract.supplier", "supplier"),
+                                                   ("previous_contract.ends", "ends"))
+        if field in allowed
+    }
     return view
 
 
@@ -859,8 +876,27 @@ def daily_order_follow_ups(today: date) -> None:
 
 
 def portal_offer_available(unit_id):
+    unit = read_json(unit_path(unit_id))
+    if not (unit.get("tenant") or {}).get("contract_sharing_opt_in", False):
+        return False
     rows = read_json(RUN_FILE)["results"] if RUN_FILE.exists() else []
     return any(row["unit_id"] == unit_id and row["decision"] == "matched" for row in rows)
+
+
+def partner_consent_disclosure(offer: dict) -> dict:
+    """Describe the fields and standard order metadata visible in the partner workspace."""
+    required = list(offer.get("required_inputs", DEFAULT_REQUIRED_INPUTS))
+    return {
+        "required_fields": [{"key": field, "label": CONNECTOR_FIELD_LABELS.get(field, field)} for field in required],
+        "standard_fields": [
+            "Unit, order, partner and offer references",
+            "Selected offer name, price and contract term",
+            "Order status and status timestamps",
+            "Consent timestamp and the approved-field list",
+            "Contact route through Centrix when a resident name is shared",
+            "Any supplier-proposed start-date change if one occurs",
+        ],
+    }
 
 
 def reassign_shared_issues_for_order(order: dict, reason: str) -> list[str]:
@@ -900,8 +936,27 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.end_headers()
         self.wfile.write(payload)
+
+    def local_client_only(self) -> bool:
+        """Keep this unauthenticated sample app loopback-only, even if rebound later."""
+        address = getattr(self, "client_address", ("127.0.0.1",))[0]
+        try:
+            return ipaddress.ip_address(address).is_loopback
+        except ValueError:
+            return False
+
+    def same_origin_post(self) -> bool:
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed = urlparse(origin)
+            if parsed.scheme != "http" or parsed.netloc.lower() != self.headers.get("Host", "").lower():
+                return False
+        return self.headers.get("Sec-Fetch-Site", "same-origin") not in ("cross-site", "none")
 
     def read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
@@ -911,6 +966,9 @@ class DemoHandler(BaseHTTPRequestHandler):
         return json.loads(raw) if raw else {}
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self.local_client_only():
+            self.send_json(403, {"error": "This sample app is available on this computer only."})
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         if path == "/phone":
@@ -962,7 +1020,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             view["following"] = following
             view["today"] = max(demo_today().isoformat(), (orders[-1].get("handover_date") or "") if orders else "")
             view["offer_available"] = portal_offer_available(unit_id)
-            view["partner"]["offers"] = [{**item, "offer_version": offer_version(item)} for item in partner.get("offers", [])]
+            view["partner"]["offers"] = [{**item, "offer_version": offer_version(item),
+                                             "consent_disclosure": partner_consent_disclosure(item)}
+                                            for item in partner.get("offers", [])]
             if role == "reltix":
                 view["data_quality"] = unit_data_quality(unit)
             if role in ("tenant", "reltix"):
@@ -970,7 +1030,12 @@ class DemoHandler(BaseHTTPRequestHandler):
             if role in ("tenant", "reltix"):
                 view["case"] = read_json(unit_path(unit_id)).get("renewal_case", {})
             if role == "tenant" and (read_json(unit_path(unit_id)).get("tenant")):
-                view["agent_variables"] = agent_variables(read_json(unit_path(unit_id)))
+                tenant_unit = read_json(unit_path(unit_id))
+                view["agent_variables"] = agent_variables(tenant_unit)
+                view["privacy_consents"] = [
+                    {key: entry.get(key) for key in ("purpose", "granted", "at", "channel", "recipient", "data_categories")}
+                    for entry in tenant_unit.get("privacy_consent_log", [])
+                ]
             calls = [c for c in read_list(CALLS_FILE, "calls") if c["unit_id"] == unit_id]
             view["calls"] = calls
             if role == "tenant":
@@ -1013,12 +1078,9 @@ class DemoHandler(BaseHTTPRequestHandler):
                                  "phone_ready": phone_ready(), "auto_dial_on": bool(os.environ.get("DEMO_PHONE_NUMBER")) and phone_ready()})
             return
         if path.startswith("/api/orders/"):
-            order_id = path.rsplit("/", 1)[-1]
-            order = next((item for item in read_orders() if item.get("order_id") == order_id), None)
-            if order is None:
-                self.send_json(404, {"error": "Unknown order."})
-                return
-            self.send_json(200, {"order": order})
+            # There is no authenticated order-detail API in this local demo. Order
+            # details are exposed only through the deliberately projected role views.
+            self.send_json(404, {"error": "Use the role-specific demo view for order status."})
             return
 
         relative = "index.html" if path == "/" else ROLE_PAGES.get(path) or unquote(path.lstrip("/"))
@@ -1037,10 +1099,19 @@ class DemoHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.end_headers()
         self.wfile.write(payload)
 
     def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if not self.local_client_only():
+            self.send_json(403, {"error": "This sample app is available on this computer only."})
+            return
+        if not self.same_origin_post():
+            self.send_json(403, {"error": "Cross-origin requests are not allowed."})
+            return
         # Case, order and event updates are read/modify/write operations shared by the role pages.
         if urlparse(self.path).path == "/api/chat":
             self.dispatch_post()
@@ -1073,6 +1144,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True})
             elif path == "/api/case":
                 self.update_case(body)
+            elif path == "/api/privacy/consent":
+                self.update_privacy_consent(body)
             elif path == "/api/clock":
                 today = date.fromisoformat(str(body.get("today")))
                 write_json(CLOCK_FILE, {"today": today.isoformat()})
@@ -1335,6 +1408,58 @@ class DemoHandler(BaseHTTPRequestHandler):
         add_event("case", f"Resident {'; '.join(changes)}.", source, unit_id)
         self.send_json(200, {"case": case})
 
+    def update_privacy_consent(self, body: dict) -> None:
+        """Record a resident's contract-sharing preference or per-call voice consent."""
+        unit_id = str(body.get("unit_id", "unit_4b"))
+        path = unit_path(unit_id)
+        unit = read_json(path)
+        purpose = str(body.get("purpose", ""))
+        granted = body.get("granted")
+        if not isinstance(granted, bool):
+            raise ValueError("Consent must be true or false.")
+        if purpose == "contract_sharing":
+            tenant = unit.setdefault("tenant", {})
+            tenant["contract_sharing_opt_in"] = granted
+            entry = {"purpose": purpose, "granted": granted, "at": now_iso(), "channel": "tenant_portal",
+                     "resident_contact_id": tenant.get("contact_id")}
+            if not granted:
+                case = unit.setdefault("renewal_case", {})
+                case.pop("chosen_offer_id", None)
+                case.pop("chosen_offer_version", None)
+                case.pop("chosen_offer_snapshot", None)
+                case["declined"] = False
+            message = "Resident enabled contract sharing for renewal checks." if granted else \
+                      "Resident withdrew contract sharing for future renewal checks."
+        elif purpose == "outbound_phone":
+            tenant = unit.setdefault("tenant", {})
+            tenant["outbound_phone_opt_in"] = granted
+            entry = {"purpose": purpose, "granted": granted, "at": now_iso(), "channel": "tenant_portal",
+                     "recipient": "ElevenLabs and Twilio", "data_categories": ["phone number", "resident name",
+                         "home address", "current supplier", "energy plan", "monthly price", "expiry date",
+                         "last four meter digits", "available offers"],
+                     "resident_contact_id": tenant.get("contact_id")}
+            message = "Resident enabled outbound AI phone calls." if granted else \
+                      "Resident withdrew consent for outbound AI phone calls."
+        elif purpose == "live_voice" and granted is True:
+            entry = {"purpose": purpose, "granted": True, "at": now_iso(), "channel": "tenant_portal",
+                     "recipient": "ElevenLabs", "data_categories": ["microphone audio", "conversation", "resident name",
+                         "home address", "energy contract details", "offer details", "last four meter digits"],
+                     "resident_contact_id": (unit.get("tenant") or {}).get("contact_id")}
+            message = "Resident consented to an ElevenLabs live voice session."
+        else:
+            raise ValueError("Unknown consent purpose.")
+        history = unit.setdefault("privacy_consent_log", [])
+        history.append(entry)
+        unit["privacy_consent_log"] = history[-500:]
+        write_json(path, unit)
+        add_event("privacy_consent", message, "tenant_portal", unit_id)
+        if purpose == "contract_sharing":
+            run_trigger("contract sharing preference changed")
+        self.send_json(200, {"consent": entry, "contract_sharing_opt_in":
+                             (unit.get("tenant") or {}).get("contract_sharing_opt_in", False),
+                             "outbound_phone_opt_in": (unit.get("tenant") or {}).get("outbound_phone_opt_in", False),
+                             "offer_available": portal_offer_available(unit_id)})
+
     def report_issue(self, body: dict) -> None:
         """A resident reports a problem at home (via Mia or the portal). New issue, or update one by issue_id."""
         unit_id = str(body.get("unit_id", "unit_4b"))
@@ -1434,14 +1559,25 @@ class DemoHandler(BaseHTTPRequestHandler):
 
     def phone_call(self, call_id: str, body: dict) -> None:
         """Optional: Mia calls a real phone (needs ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID)."""
-        if not phone_ready():
-            self.send_json(400, {"error": "Phone calls aren't set up. See README: ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID."})
-            return
         call = next((c for c in read_list(CALLS_FILE, "calls") if c["call_id"] == call_id), None)
         if call is None:
             self.send_json(404, {"error": "Unknown call."})
             return
-        ok, message = place_phone_call(call, str(body.get("to_number") or os.environ.get("DEMO_PHONE_NUMBER", "")))
+        unit = read_json(unit_path(call["unit_id"]))
+        if not unit or not (unit.get("tenant") or {}).get("outbound_phone_opt_in", False):
+            self.send_json(403, {"error": "The resident has not enabled outbound AI phone calls."})
+            return
+        if not phone_ready():
+            self.send_json(400, {"error": "Phone calls aren't set up. See README: ELEVENLABS_API_KEY and ELEVENLABS_PHONE_NUMBER_ID."})
+            return
+        tenant = unit.get("tenant") or {}
+        configured_number = str(os.environ.get("DEMO_PHONE_NUMBER") or tenant.get("phone") or "")
+        requested_number = str(body.get("to_number") or configured_number)
+        normalize_number = lambda value: re.sub(r"[^+0-9]", "", value)
+        if not configured_number or normalize_number(requested_number) != normalize_number(configured_number):
+            self.send_json(403, {"error": "Outbound calls can only use the resident number on file or the configured demo number."})
+            return
+        ok, message = place_phone_call(call, configured_number)
         self.send_json(200 if ok else 502, {"ok": ok, "message": message} if ok else {"error": message})
 
     def create_order(self, body: dict) -> None:

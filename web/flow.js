@@ -23,6 +23,8 @@ const call = {
 };
 const resident = { declined: false, consent: false, busy: false, error: "", submissionId: null, selectedVersion: null };
 const complaintFormAttempt = { sessionId: null, eventId: null, text: null };
+let contractPrivacyMessage = "";
+let phonePrivacyMessage = "";
 
 /* ---------- small helpers ---------- */
 
@@ -43,7 +45,38 @@ const latestOrder = () => (state.orders || []).slice(-1)[0] || null;
 const firstName = () => (state.unit?.tenant?.name || "there").split(" ")[0];
 const currentContract = () => (state.unit?.contracts || []).find((c) => c.type === "energy_supply" && c.status !== "signed") || energyContract();
 const pickedOffer = () => offers().find((offer) => offer.offer_id === chosenOfferId) || null;
-const SHARED_FIELDS = ["my name", "address", "meter number", "switch reading", "and start date"];
+function renderPrivacyPreferences() {
+  const checkbox = document.getElementById("contract-sharing-toggle");
+  if (!checkbox || !state.unit) return;
+  if (document.activeElement !== checkbox && !checkbox.disabled) checkbox.checked = !!state.unit.tenant?.contract_sharing_opt_in;
+  const phoneToggle = document.getElementById("outbound-phone-toggle");
+  if (phoneToggle && document.activeElement !== phoneToggle && !phoneToggle.disabled) phoneToggle.checked = !!state.unit.tenant?.outbound_phone_opt_in;
+  const lastChange = [...(state.privacy_consents || [])].reverse().find((entry) => entry.purpose === "contract_sharing");
+  const recorded = lastChange ? ` Last changed ${new Date(lastChange.at).toLocaleString("en-GB")}.`
+    : " This sample record starts with its saved preference; no change has been recorded in this session.";
+  document.getElementById("privacy-settings-message").textContent = contractPrivacyMessage || (checkbox.checked
+    ? `Contract sharing is on. You can turn it off at any time.${recorded}`
+    : `Contract sharing is off. Renewal checks and new offers are paused.${recorded}`);
+  if (phoneToggle) document.getElementById("phone-privacy-message").textContent = phonePrivacyMessage ||
+    (phoneToggle.checked ? "Outbound AI phone calls are enabled." : "Outbound AI phone calls are disabled.");
+  const history = (state.privacy_consents || []).slice(-8).reverse();
+  document.getElementById("privacy-consent-history").innerHTML = history.length
+    ? history.map((entry) => {
+      const purpose = { contract_sharing: "Contract sharing", outbound_phone: "Outbound AI calls", live_voice: "ElevenLabs live voice" }[entry.purpose] || entry.purpose;
+      const categories = entry.data_categories?.length ? `<br><span class="muted small">Data: ${entry.data_categories.map(esc).join(", ")}</span>` : "";
+      return `<div class="detail-row"><span>${esc(purpose)} · ${entry.granted ? "allowed" : "withdrawn"}${categories}</span><strong>${esc(new Date(entry.at).toLocaleString("en-GB"))}${entry.recipient ? ` · ${esc(entry.recipient)}` : ""}</strong></div>`;
+    }).join("")
+    : '<p class="muted small">No consent changes have been recorded yet. Some sample records begin with contract sharing enabled.</p>';
+}
+
+function consentDisclosureText(offer) {
+  if (!offer) return "Choose a plan to see which information the supplier workspace will receive.";
+  const details = offer.consent_disclosure || { required_fields: [], standard_fields: [] };
+  const fields = details.required_fields.map((field) => field.label);
+  const standard = details.standard_fields;
+  const fieldText = fields.length ? fields.join(", ") : "no offer-specific resident or home fields";
+  return `I agree to share ${fieldText} with ${esc(state.partner.partner)} in this local demo for ${esc(offer.product)} at ${money(offer.estimated_monthly_price_eur)}/month for ${Number(offer.contract_months || 0)} months. The simulated supplier workspace will also see: ${standard.map(esc).join(", ")}. Current supplier and contract end date are shared only if listed above.`;
+}
 
 /* Resident-initiated complaint call. Contract decisions are made in the portal. */
 const clientTools = {
@@ -94,8 +127,18 @@ function complaintFormIds(text) {
 }
 
 async function startCall() {
+  const voiceConsent = byId("voice-consent-box");
+  if (!voiceConsent?.checked) return;
   if (!window.ElevenLabsClient) {
     call.error = "Voice calling is unavailable right now. Please try again later.";
+    return render();
+  }
+  voiceConsent.checked = false;
+  byId("call-agent-button").disabled = true;
+  try {
+    await post("/api/privacy/consent", { unit_id: UNIT, purpose: "live_voice", granted: true });
+  } catch (error) {
+    call.error = `Could not record your consent, so the live call was not started: ${error.message}`;
     return render();
   }
   Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: newComplaintId(),
@@ -309,7 +352,7 @@ function renderDecision() {
       ${offer ? `<p class="saving">${saving > 0 ? `You save about <b>${money(saving)}</b> a month (${money(saving * 12)} a year) compared with today.` : `This plan costs ${money(-saving)} more per month than today.`}</p>` : `<p class="muted small">Pick a plan above to continue.</p>`}
       <label class="consent">
         <input type="checkbox" id="consent-box" ${resident.consent ? "checked" : ""} ${offer ? "" : "disabled"}>
-        <span>I agree to share ${SHARED_FIELDS.join(", ")} and the reviewed terms for ${esc(offer?.product || "this plan")} at ${money(offer?.estimated_monthly_price_eur)}/month for ${Number(offer?.contract_months || 0)} months with ${esc(state.partner.partner)}.</span>
+        <span>${consentDisclosureText(offer)}</span>
       </label>
       <div class="decision-actions">
         <button class="button button-primary" type="button" data-decide="sign" ${offer && resident.consent && !resident.busy ? "" : "disabled"}>${resident.busy ? "Sending…" : "Confirm & sign"}</button>
@@ -673,6 +716,7 @@ function syncFromCase() {
 
 function render() {
   syncFromCase();
+  renderPrivacyPreferences();
   if (document.getElementById("call-card")) {
     const avatar = document.querySelector(".topbar-right .avatar");
     const name = state.unit?.tenant?.name;
@@ -771,6 +815,7 @@ document.addEventListener("click", async (event) => {
   if (t.dataset.run) { await post("/api/run"); await loadPortfolio(); await refreshState(); }
   if (t.dataset.phone) phoneCall(t.dataset.phone);
   if (t.id === "demo-reset") {
+    if (!window.confirm("Reset all demo data for every sample unit? This clears demo orders, reports and consent history.")) return;
     await endCall();
     Object.assign(call, { status: "idle", transcript: [], issueId: null, error: "", muted: false });
     Object.assign(complaintFormAttempt, { sessionId: null, eventId: null, text: null });
@@ -785,6 +830,46 @@ document.addEventListener("click", async (event) => {
 });
 document.addEventListener("change", async (event) => {
   if (event.target.id === "consent-box") { resident.consent = event.target.checked; renderDecision(); }
+  if (event.target.id === "contract-sharing-toggle") {
+    const toggle = event.target;
+    const desired = toggle.checked;
+    toggle.disabled = true;
+    contractPrivacyMessage = "Saving your preference…";
+    byId("privacy-settings-message").textContent = contractPrivacyMessage;
+    try {
+      const result = await post("/api/privacy/consent", { unit_id: UNIT, purpose: "contract_sharing", granted: desired });
+      contractPrivacyMessage = result.contract_sharing_opt_in
+        ? "Contract sharing is on. You can turn it off at any time."
+        : "Contract sharing is off. Future renewal checks and new orders are paused.";
+      await refreshState();
+    } catch (error) {
+      toggle.checked = !!state.unit?.tenant?.contract_sharing_opt_in;
+      contractPrivacyMessage = `Could not save this preference: ${error.message}`;
+    } finally {
+      toggle.disabled = false;
+      renderPrivacyPreferences();
+    }
+  }
+  if (event.target.id === "outbound-phone-toggle") {
+    const toggle = event.target;
+    const desired = toggle.checked;
+    toggle.disabled = true;
+    phonePrivacyMessage = "Saving your preference…";
+    byId("phone-privacy-message").textContent = phonePrivacyMessage;
+    try {
+      await post("/api/privacy/consent", { unit_id: UNIT, purpose: "outbound_phone", granted: desired });
+      phonePrivacyMessage = desired ? "Outbound AI phone calls are enabled. You can turn this off at any time."
+        : "Outbound AI phone calls are disabled.";
+      await refreshState();
+    } catch (error) {
+      toggle.checked = !!state.unit?.tenant?.outbound_phone_opt_in;
+      phonePrivacyMessage = `Could not save this preference: ${error.message}`;
+    } finally {
+      toggle.disabled = false;
+      renderPrivacyPreferences();
+    }
+  }
+  if (event.target.id === "voice-consent-box") byId("call-agent-button").disabled = !event.target.checked;
   if (event.target.id === "demo-date" && event.target.value) {
     await post("/api/clock", { today: event.target.value });
     await loadPortfolio(); await refreshState();
