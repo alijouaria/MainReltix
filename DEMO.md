@@ -25,10 +25,17 @@ Use **Reset demo** on the staff dashboard to repeat the walkthrough.
 
 ## Staff dashboard
 
-- **Date bar:** +1 day, +1 week, or **Next event** jumps to the next date something happens.
-- **Needs you:** everything centrix and Mia couldn't finish alone (flags, complaints, requests for a person), urgent first, with **Open case** and **Mark handled**.
-- **Flats:** search (press `/`), filter chips, 10 per page. Click a row to open the case; `⋯` opens the resident, supplier or owner view.
-- **Live activity** + pop-ups show what residents, Mia and the supplier just did. The case panel follows the latest activity; on a pinned flat, the pill at the top takes you back to live.
+One screen per view, picked in the sidebar. Nothing scrolls past the window; long lists scroll inside their card.
+
+- **Overview:** key figures, **Needs you** (urgent first, with **Open case** / **✓ Done**), the renewal pipeline (in window → reached → chosen → signed → running), Mia's calls, contracts expiring next and live activity.
+- **Flats:** search (press `/`), filter chips, 10 per page. Click a row to open its case; `⋯` opens the resident, supplier or owner view, or a QR for the phone.
+- **Case:** the flat's summary, connection flow and quick actions (Mia calls now, QR, resident view), plus tabs: **Activity** (repeated steps fold into one line), **Complaints**, **Contracts & offers**, **Record**.
+- **Energy partner:** the supplier's own page: what needs an answer, an order board by status, the selected order with its answer buttons, and the plan editor.
+- **Demo controls** (sidebar): demo date, Run today's check, Reset demo.
+
+## Mia remembers the resident
+
+Each call gets `{{customer_status}}`: the chosen plan (even if not confirmed yet), the signed order, open and fixed complaints, callbacks and notes. In ElevenLabs the agent has two more client tools: `get_customer_status` (fresh copy mid-call) and `resolve_issue` (the resident says a problem is fixed, the complaint closes and leaves the staff queue).
 
 ## Date guide (set the demo date in the sidebar, then watch "Today's run")
 
