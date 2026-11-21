@@ -20,8 +20,26 @@ function energyContract() {
 }
 
 function electricityMeter() {
-  return state.unit?.unit?.meters?.find((meter) => meter.type === "electricity") || {};
+  const meters = (state.unit?.unit?.meters || []).filter((meter) => meter.type === "electricity");
+  const selectedId = byId("electric-meter-select").value || state.unit?.unit?.selected_electricity_meter_id;
+  return meters.find((meter) => meter.meter_id === selectedId) || meters[0] || {};
 }
+
+function renderMeterControls() {
+  const meters = (state.unit?.unit?.meters || []).filter((meter) => meter.type === "electricity");
+  const select = byId("electric-meter-select");
+  const previous = select.value || state.unit?.unit?.selected_electricity_meter_id;
+  select.innerHTML = meters.map((meter, index) => `<option value="${esc(meter.meter_id)}">${esc(meter.number || `Electricity meter ${index + 1} · number needed`)}</option>`).join("");
+  if (meters.some((meter) => meter.meter_id === previous)) select.value = previous;
+  if (meters.length > 1) byId("meter-select-wrap").hidden = false;
+  else if (meters.length === 1) { select.value = meters[0].meter_id; byId("meter-select-wrap").hidden = false; }
+  else { select.innerHTML = '<option value="">Add an electricity meter below</option>'; byId("meter-select-wrap").hidden = false; }
+  const meter = meters.find((item) => item.meter_id === select.value) || meters[0];
+  byId("meter-identifier-value").value = meter?.number || "";
+  byId("meter-identifier-value").required = !meter?.number;
+}
+
+window.selectedMeterId = () => byId("electric-meter-select").value || state.unit?.unit?.selected_electricity_meter_id || "";
 
 function daysUntil(value) {
   if (!value) return null;
@@ -62,6 +80,7 @@ function renderOffers(targetId, selectable = false) {
 
 function render() {
   if (!state.unit || !state.partner) return;
+  renderMeterControls();
   const unit = state.unit;
   const tenant = unit.tenant || {};
   const property = unit.property || {};
@@ -125,6 +144,22 @@ function render() {
   ];
   byId("property-details").innerHTML = detailRows.map(([label, value]) => `<div class="detail-row"><span>${esc(label)}</span><strong>${esc(value || "—")}</strong></div>`).join("");
 
+  const quality = state.data_quality || [];
+  const qualityProblems = quality.filter((item) => item.status !== "verified").length;
+  byId("data-quality-count").textContent = qualityProblems ? `${qualityProblems} need review` : "All verified";
+  const qualityHtml = quality.map((item) => {
+    const badge = item.status === "verified" ? "badge-green" : item.status === "unverified" ? "badge-soft" : "badge-amber";
+    const status = item.status === "verified" ? "Verified" : item.status === "unverified" ? (item.recorded_at ? "Reported · unverified" : "Source unknown") : item.status === "outdated" ? "Outdated" : "Check needed";
+    const evidence = item.value == null ? "No value on file" : `${item.value}`;
+    const checked = item.verified_at ? `Verified ${new Date(item.verified_at).toLocaleDateString("en-GB")}` : item.recorded_at ? `Reported ${new Date(item.recorded_at).toLocaleDateString("en-GB")}` : "Verification date unavailable";
+    return `<div class="quality-item"><div class="quality-top"><strong>${esc(item.label)}</strong><span class="badge ${badge}">${status}</span></div>
+      <p>${esc(item.message)}</p><span class="muted small">${esc(evidence)} · ${esc(item.source || "Source unknown")} · ${esc(checked)}</span></div>`;
+  }).join("") || `<p class="muted small">No workflow-critical data checks are available.</p>`;
+  if (byId("data-quality").dataset.html !== qualityHtml) {
+    byId("data-quality").dataset.html = qualityHtml;
+    byId("data-quality").innerHTML = qualityHtml;
+  }
+
   const switchReading = meter.switch_reading || {};
   const hasReading = switchReading.value_kwh !== null && switchReading.value_kwh !== undefined && switchReading.value_kwh !== "";
   byId("reading-status").textContent = hasReading ? "Reading saved" : "Not entered";
@@ -140,9 +175,6 @@ function render() {
   } else if (state.today && !byId("reading-date").value) {
     byId("reading-date").value = state.today;
   }
-  byId("meter-identifier-form").hidden = Boolean(meter.number);
-  if (meter.number) byId("meter-identifier-value").value = meter.number;
-
   renderJob();
   renderPlans();
   const offersText = offers.map((offer) => `${offer.product} | ${Number(offer.estimated_monthly_price_eur).toFixed(2)} | ${Number(offer.renewable_share_percent)} | ${Number(offer.contract_months)}`).join("\n");
@@ -226,7 +258,8 @@ byId("reading-form").addEventListener("submit", async (event) => {
   try {
     const response = await fetch("/api/reading", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value, unit_id: UNIT })
+      body: JSON.stringify({ value_kwh: byId("reading-value").value, read_at: byId("reading-date").value,
+        unit_id: UNIT, meter_id: window.selectedMeterId() })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the reading.");
@@ -238,17 +271,27 @@ byId("reading-form").addEventListener("submit", async (event) => {
   }
 });
 
+byId("electric-meter-select").addEventListener("change", async () => {
+  const message = byId("meter-identifier-message");
+  try {
+    const response = await fetch("/api/meter", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unit_id: UNIT, meter_id: window.selectedMeterId() }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not select that meter.");
+    await refreshState();
+  } catch (error) { message.textContent = error.message; message.classList.add("error"); }
+});
 byId("meter-identifier-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = byId("meter-identifier-message");
   message.className = "form-message";
   message.textContent = "Saving…";
   try {
-    const response = await fetch("/api/meter-identifier", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ unit_id: UNIT, number: byId("meter-identifier-value").value }) });
+    const response = await fetch("/api/meter", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ unit_id: UNIT, meter_id: window.selectedMeterId(), number: byId("meter-identifier-value").value }) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the meter number.");
-    message.textContent = "Meter number added to the existing order.";
+    message.textContent = "Meter details saved.";
     await refreshState();
   } catch (error) { message.textContent = error.message; message.classList.add("error"); }
 });
