@@ -15,6 +15,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import threading
 from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -137,13 +138,30 @@ def view_for(role: str, unit: dict, partner: dict) -> dict:
 
 
 def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    # On Windows a file being swapped in by write_json can't be opened for a split second
+    # (PermissionError). Many page polls run in parallel, so retry briefly instead of failing the request.
+    for attempt in range(8):
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except (PermissionError, json.JSONDecodeError):
+            if attempt == 7:
+                raise
+            time.sleep(0.025 * (attempt + 1))
 
 
 def write_json(path: Path, value: dict) -> None:
-    temp = path.with_suffix(".tmp")
+    # unique temp file per write, so two threads saving the same flat never share one
+    temp = path.with_name(f"{path.stem}.{threading.get_ident()}.{uuid.uuid4().hex[:6]}.tmp")
     temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp.replace(path)
+    for attempt in range(8):
+        try:
+            temp.replace(path)
+            return
+        except PermissionError:   # Windows: someone is reading the file right now
+            if attempt == 7:
+                temp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.025 * (attempt + 1))
 
 
 def unit_path(unit_id: str) -> Path:

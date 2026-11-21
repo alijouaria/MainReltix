@@ -150,23 +150,19 @@ const clientTools = {
   },
   // Memory: Mia can look up what this resident chose, signed, reported or asked for, as it stands right now.
   get_customer_status: async () => {
-    await refreshState();
+    await freshState();
     return state.agent_variables?.customer_status || "No record for this resident.";
   },
   // The resident says a problem they reported is fixed: close that complaint.
-  resolve_issue: async ({ issue_id, note }) => {
-    const open = (state.unit?.issues || []).filter((i) => !i.resolved);
-    const issue = open.find((i) => i.issue_id === issue_id) || (open.length === 1 ? open[0] : null);
-    if (!issue) return open.length ? `Which one? Open complaints: ${open.map((i) => `${i.issue_id}: ${i.text}`).join("; ")}` : "There are no open complaints.";
-    try {
-      await post("/api/issues", { unit_id: UNIT, issue_id: issue.issue_id, resolved: true, note: String(note || ""), source: "voice" });
-      await refreshState();
-      return `Marked as fixed: ${issue.text}`;
-    } catch (error) { return `Couldn't update it: ${error.message}`; }
-  },
-  save_note: ({ note }) => {
+  resolve_issue: async ({ issue_id, note }) => resolveIssue(issue_id, note),
+  save_note: async ({ note }) => {
     if (!note) return "Nothing to save.";
-    if (call.reason === "problem") return reportIssue({ text: String(note) });
+    if (call.reason === "problem") {
+      // "It's fixed now" is not a new complaint: close the open one instead of opening another ticket.
+      if (!call.issueId && FIXED_WORDS.test(String(note)) && openIssues().length) return resolveIssue("", String(note));
+      if (call.resolvedIssue && !call.issueId) { saveCase({ note: String(note) }); return "Noted in the resident's file."; }
+      return reportIssue({ text: String(note) });
+    }
     saveCase({ note: String(note) });
     return "Noted in the resident's file.";
   },
@@ -176,6 +172,35 @@ const clientTools = {
     return "A property manager will follow up.";
   },
 };
+
+// Fresh copy of the resident's file. The page polls in parallel and a request can fail now and then
+// (busy laptop, phone tunnel), so retry a few times and fall back to the last copy we have.
+async function freshState() {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try { await refreshState(); return true; } catch { await new Promise((r) => setTimeout(r, 300 * (attempt + 1))); }
+  }
+  return false;
+}
+const FIXED_WORDS = /\b(fixed|resolved|sorted|solved|repaired|working again|works again|no longer|all good now)\b/i;
+const openIssues = () => (state.issues || []).filter((i) => !i.resolved && !i.reply);
+async function resolveIssue(issueId, note) {
+  await freshState();
+  const open = openIssues();
+  const issue = open.find((i) => i.issue_id === issueId) || (open.length === 1 ? open[0] : null)
+    || (!issueId && open.length ? open[open.length - 1] : null);   // "it's fixed" with no id: the most recent one
+  if (!issue) return open.length ? `Which one? Open complaints: ${open.map((i) => `${i.issue_id}: ${i.text}`).join("; ")}` : "There are no open complaints on file.";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await post("/api/issues", { unit_id: UNIT, issue_id: issue.issue_id, resolved: true, note: String(note || "").slice(0, 200), source: "voice" });
+      call.resolvedIssue = issue.issue_id;
+      freshState();
+      return `Marked as fixed: ${issue.text}. The property team can see it's closed.`;
+    } catch (error) {
+      if (attempt === 2) return `Couldn't update it: ${error.message}`;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+}
 
 // Problem reports (resident calls Mia): one ticket per call, later details and "urgent" update the same ticket.
 async function reportIssue({ text = "", urgent = false, reason = "" }) {
@@ -189,7 +214,7 @@ async function reportIssue({ text = "", urgent = false, reason = "" }) {
       call_session_id: call.sessionId, client_event_id: call.pendingEvent.id });
     call.issueId = issue.issue_id;
     call.pendingEvent = null;
-    refreshState();
+    freshState();
     return issue.urgent ? "Sent to the property team as urgent. A person will contact them soon." : "Problem sent to the property team.";
   } catch (error) { return `Couldn't save it: ${error.message}`; }
 }
@@ -311,13 +336,13 @@ async function startCall(reason = "renewal") {
     call.error = `Could not record your consent, so the live call was not started: ${error.message}`;
     return render();
   }
-  Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: newComplaintId(),
+  Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, resolvedIssue: null, sessionId: newComplaintId(),
     eventNumber: 0, pendingEvent: null, recovery: null, reason, simulated: false, linkSent: null });
   render();
-  await refreshState().catch(() => {});   // Mia starts with the latest record (choices, complaints, notes)
+  await freshState();   // Mia starts with the latest record (choices, complaints, notes)
   const vars = { ...state.agent_variables };
   if (reason === "problem") {
-    const open = (state.unit?.issues || []).filter((i) => !i.resolved);
+    const open = openIssues();
     const last = open[open.length - 1];
     const topic = last ? last.text.replace(/[.!?].*$/, "").toLowerCase().split(" ").slice(0, 8).join(" ") : "";
     Object.assign(vars, { call_reason: "problem_report", first_message: last
