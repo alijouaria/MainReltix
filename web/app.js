@@ -25,14 +25,9 @@ function electricityMeter() {
   return meters.find((meter) => meter.meter_id === selectedId) || meters[0] || {};
 }
 
-function decisionOrder() {
-  return (state.orders || []).find(order => order.order_id === state.decision_order_id);
-}
-
 function renderMeterControls() {
   const meters = (state.unit?.unit?.meters || []).filter((meter) => meter.type === "electricity");
   const select = byId("electric-meter-select");
-  if (select === ABSENT) return;
   const previous = select.value || state.unit?.unit?.selected_electricity_meter_id;
   select.innerHTML = meters.map((meter, index) => `<option value="${esc(meter.meter_id)}">${esc(meter.number || `Electricity meter ${index + 1} · number needed`)}</option>`).join("");
   if (meters.some((meter) => meter.meter_id === previous)) select.value = previous;
@@ -40,15 +35,8 @@ function renderMeterControls() {
   else if (meters.length === 1) { select.value = meters[0].meter_id; byId("meter-select-wrap").hidden = false; }
   else { select.innerHTML = '<option value="">Add an electricity meter below</option>'; byId("meter-select-wrap").hidden = false; }
   const meter = meters.find((item) => item.meter_id === select.value) || meters[0];
-  const input = byId("meter-identifier-value");
-  const key = JSON.stringify([UNIT, meter?.meter_id]);
-  const number = meter?.number || "";
-  if (input.dataset.meter !== key || input.value === input.defaultValue) {
-    if (input.value !== number) input.value = number;
-  }
-  input.defaultValue = number;
-  input.dataset.meter = key;
-  input.required = !meter?.number;
+  byId("meter-identifier-value").value = meter?.number || "";
+  byId("meter-identifier-value").required = !meter?.number;
 }
 
 window.selectedMeterId = () => byId("electric-meter-select").value || state.unit?.unit?.selected_electricity_meter_id || "";
@@ -68,13 +56,12 @@ function renderOffers(targetId, selectable = false) {
   const offers = state.partner?.offers || [];
   const target = byId(targetId);
   if (!offers.length) {
-    delete target.dataset.offersHtml;
     target.innerHTML = '<div class="reading-summary">No partner offers have been added yet.</div>';
     return;
   }
   const best = offers.reduce((a, b) => Number(b.estimated_monthly_price_eur) < Number(a.estimated_monthly_price_eur) ? b : a);
   const tag = selectable ? "button" : "div";
-  const html = offers.map((offer) => `
+  target.innerHTML = offers.map((offer, index) => `
     <${tag} class="offer-row${offer === best ? " recommended" : ""}"${selectable ? ` type="button" data-offer-id="${esc(offer.offer_id)}" aria-pressed="${chosenOfferId === offer.offer_id}"` : ""}>
       <div class="offer-main">
         <span class="offer-title">${esc(offer.product)}</span>
@@ -82,11 +69,8 @@ function renderOffers(targetId, selectable = false) {
       </div>
       <div class="offer-price">${money(offer.estimated_monthly_price_eur)}<span>${chosenOfferId === offer.offer_id && selectable ? "your pick" : "per month · estimate"}</span></div>
     </${tag}>`).join("");
-  if (target.dataset.offersHtml === html) return;
-  target.dataset.offersHtml = html;
-  target.innerHTML = html;
   if (selectable) target.querySelectorAll("button.offer-row").forEach((row) => row.addEventListener("click", () => {
-    const offer = state.partner.offers.find((item) => item.offer_id === row.dataset.offerId);
+    const offer = offers.find((item) => item.offer_id === row.dataset.offerId);
     chosenOfferId = offer?.offer_id || null;
     chosenOfferVersion = offer?.offer_version || null;
     renderOffers(targetId, true);
@@ -138,8 +122,8 @@ function render() {
     expiryBadge.className = remaining <= 60 ? "badge badge-amber" : "badge badge-green";
     byId("expiry-message").textContent = `Your current contract ends in ${remaining} days.`;
   }
-  const currentOrder = decisionOrder();
-  byId("expiry-subtext").textContent = (!state.offer_available || (currentOrder && !["rejected", "cancelled"].includes(currentOrder.status))) ? "" : offers.length
+  const currentOrder = (state.orders || []).at(-1);
+  byId("expiry-subtext").textContent = (!state.offer_available || (currentOrder && currentOrder.status !== "rejected")) ? "" : offers.length
     ? `${offers.length} partner ${offers.length === 1 ? "offer is" : "offers are"} available to review.`
     : "There are no partner offers available yet.";
 
@@ -302,17 +286,11 @@ byId("meter-identifier-form").addEventListener("submit", async (event) => {
   const message = byId("meter-identifier-message");
   message.className = "form-message";
   message.textContent = "Saving…";
-  const input = byId("meter-identifier-value");
-  const submitted = input.value;
-  const meterId = window.selectedMeterId();
   try {
     const response = await fetch("/api/meter", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ unit_id: UNIT, meter_id: meterId, number: submitted }) });
+      body: JSON.stringify({ unit_id: UNIT, meter_id: window.selectedMeterId(), number: byId("meter-identifier-value").value }) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Could not save the meter number.");
-    if (meterId === window.selectedMeterId() && input.value === submitted) {
-      input.value = input.defaultValue = result.number || "";
-    }
     message.textContent = "Meter details saved.";
     await refreshState();
   } catch (error) { message.textContent = error.message; message.classList.add("error"); }

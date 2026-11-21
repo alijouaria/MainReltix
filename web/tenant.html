@@ -46,20 +46,6 @@
         <div class="offer-list" id="tenant-offers"></div>
         <p class="fine-print">Partner estimates · Demo order</p></div>
         <div id="decision" aria-live="polite"></div>
-        <details class="fold" id="renewal-history" hidden>
-          <summary>Previous handovers</summary>
-          <ul id="renewal-history-list"></ul>
-        </details>
-        <details class="fold" id="privacy-settings">
-          <summary>Privacy preferences</summary>
-          <p class="muted small">Contract sharing lets Centrix check renewal dates and prepare an offer. Turning it off stops future renewal checks and new orders; it does not cancel an order already sent to a supplier.</p>
-          <label class="consent"><input id="contract-sharing-toggle" type="checkbox"><span>Allow Centrix to use my current energy contract details for renewal checks.</span></label>
-          <label class="consent"><input id="outbound-phone-toggle" type="checkbox"><span>Allow Reltix to place an AI phone call using ElevenLabs and Twilio. My phone number, name, address, current supplier, plan, price, expiry, last four meter digits, and available offers will be sent for that call.</span></label>
-          <p class="form-message" id="privacy-settings-message" role="status"></p>
-          <p class="form-message" id="phone-privacy-message" role="status"></p>
-          <div id="privacy-consent-history" class="detail-list" aria-live="polite"></div>
-          <p class="fine-print">See the <a href="/privacy">privacy and data notice</a>.</p>
-        </details>
       </article>
 
       <section class="complaint-card" aria-labelledby="complaint-title">
@@ -70,16 +56,15 @@
           <div class="complaint-text">
             <p class="complaint-kicker">Need help with something at home?</p>
             <h2 id="complaint-title">Report a problem</h2>
-            <p>Call our AI agent about a repair, heating issue, leak, or another concern. A live call sends microphone audio, conversation, your name, home address, current energy plan and expiry, offer details, and the last four meter digits to ElevenLabs. The call is optional; you can leave the consent box empty and continue using the portal.</p>
+            <p>Call our AI agent about a repair, heating issue, leak, or another concern. It will help capture the details for your property team.</p>
           </div>
         </div>
         <div class="complaint-action">
-          <label class="consent voice-consent"><input id="voice-consent-box" type="checkbox"><span>I agree to send my microphone audio, conversation, name, home address, energy contract and offer details, and the last four meter digits to ElevenLabs for this live call. Any report I ask Mia to save is stored in the local demo records.</span></label>
-          <button class="button button-primary call-agent-button" id="call-agent-button" type="button" data-call="problem" aria-describedby="call-agent-note" disabled>
+          <button class="button button-primary call-agent-button" type="button" data-call="problem" aria-describedby="call-agent-note">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.35 1.9.68 2.79a2 2 0 0 1-.45 2.11L8.07 9.93a16 16 0 0 0 6 6l1.31-1.31a2 2 0 0 1 2.11-.45c.89.33 1.83.56 2.79.68A2 2 0 0 1 22 16.92Z"/></svg>
             Call AI agent
           </button>
-          <p class="call-agent-note" id="call-agent-note">Check the consent box before starting a live call. Microphone access is also required.</p>
+          <p class="call-agent-note" id="call-agent-note">Use your microphone to describe the problem to Mia.</p>
           <p class="form-message" id="issue-feedback" role="status"></p>
           <div id="issue-list"></div>
         </div>
@@ -112,6 +97,6 @@
     </section>
   </main>
 
-  <footer class="app-footer">Reltix · local demo · sample data · <a href="/privacy">Privacy &amp; data</a> · <button class="text-button" id="demo-reset" type="button">Reset all demo data</button></footer>
+  <footer class="app-footer">Reltix · local demo · sample data · <button class="text-button" id="demo-reset" type="button">Reset demo</button></footer>
 </body>
 </html>

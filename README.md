@@ -15,9 +15,3 @@ The local simulation uses Python’s standard library and sample JSON. It works 
 The daily check finds opted-in residents within the renewal window and the partner’s postcode coverage. Matched residents see a portal offer. Staff can change the date, rerun the check or reset the sample data. Orders, replies, consent and contract history are stored under `data/centrix/`.
 
 The owner sees the unit status and confirmed start date. The supplier sees its accepted orders and complaints the tenant chose to share. These are role-specific demo views on a local server.
-
-## Privacy and consent
-
-The workspaces are local role simulations, not authenticated accounts. The server binds to loopback and rejects non-local requests, but anyone using the same computer can open every workspace. Use synthetic data only. See the in-app [privacy and data notice](web/privacy.html).
-
-Residents can switch contract sharing and outbound AI phone calls on or off in the tenant portal. Each renewal order requires a separate offer review and consent. Starting the live ElevenLabs browser call requires a separate per-call consent. Outbound ElevenLabs/Twilio phone calls are blocked until the resident enables them. Demo records are stored as JSON under `data/centrix/` and remain until **Reset all demo data** restores the sample records. No automatic retention timer is implemented.

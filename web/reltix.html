@@ -8,7 +8,6 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/theme.css">
   <script src="/app.js" defer></script>
-  <script src="/vendor/qrcode.js" defer></script>
   <script src="/flow.js" defer></script>
 </head>
 <body data-role="reltix" class="dash">
@@ -16,8 +15,7 @@
     <a class="brand" href="/" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""><span class="brand-sub">centrix</span></a>
     <p class="nav-label">Menu</p>
     <nav class="side-nav">
-      <a href="#inbox" class="active"><svg class="icon" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v5H4v-5z"/></svg>Needs you<span class="nav-count" id="nav-inbox-count"></span></a>
-      <a href="#overview"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
+      <a href="#overview" class="active"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
       <a href="#flats"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>Flats</a>
       <a href="#case"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Live case</a>
       <a href="#partner"><svg class="icon" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Energy partner</a>
@@ -38,36 +36,12 @@
         <h1 class="dash-hello">Good to see you, property team</h1>
         <p class="muted small">Centrix checks each flat for renewals. Follow tenant decisions, complaint calls and supplier replies.</p>
       </div>
-      <div class="topbar-right"><div class="phone-menu"><button class="chip-btn primary" type="button" id="phone-btn" aria-expanded="false" aria-controls="phone-pop">📱 Phone</button>
-        <div class="phone-pop" id="phone-pop" hidden>
-          <strong>Open a resident's page on your phone</strong>
-          <label class="small muted">Flat <select id="phone-flat"></select></label>
-          <div id="phone-qr" class="phone-qr"></div>
-          <div class="phone-link"><input id="phone-url" readonly aria-label="Phone link"><button class="mini-btn" type="button" id="phone-copy">Copy</button></div>
-          <p class="muted small" id="phone-note">Scan with the phone camera, then tap the page once so it can ring.</p>
-        </div></div><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
+      <div class="topbar-right"><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
     </header>
-
 
     <section class="kpi-row" id="overview" aria-label="Key figures"><div id="kpis" class="kpis"></div></section>
 
-    <div class="dash-cols">
-     <div class="col-main">
-      <section class="panel panel-inbox" id="inbox" aria-labelledby="inbox-title">
-        <div class="panel-head"><h2 id="inbox-title">Needs you</h2><span class="muted small" id="inbox-sub"></span></div>
-        <div id="inbox-list" class="inbox-list"></div>
-      </section>
-
-      <section class="panel panel-flats" aria-label="Flats">
-        <a id="flats"></a>
-        <div id="portfolio" class="portfolio" aria-live="polite"></div>
-      </section>
-     </div>
-     <div class="col-side">
-      <section class="panel panel-feed" aria-labelledby="feed-title">
-        <div class="panel-head"><h2 id="feed-title">Live activity</h2><span class="muted small">residents, Mia, supplier</span></div>
-        <ol id="feed" class="feed"></ol>
-      </section>
+    <div class="dash-grid">
       <section class="panel panel-network" aria-labelledby="network-title">
         <div class="panel-head"><h2 id="network-title">Connection flow</h2><span class="muted small" id="network-sub">Flat —</span></div>
         <div id="network" class="network"></div>
@@ -113,10 +87,11 @@
         <p class="notice">Resident consent is required before personal data is shared or an order is placed.</p>
       </section>
 
-     </div>
-    </div>
+      <section class="panel panel-flats" aria-label="Today's run">
+        <a id="flats"></a>
+        <div id="portfolio" class="portfolio" aria-live="polite"></div>
+      </section>
 
-<<<<<<< HEAD
     </div>
     </main>
       <section class="staff-partner view" id="company-view" aria-labelledby="partner-page-title">
@@ -148,30 +123,6 @@
           <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
         </section>
       </section>
-=======
-      <section class="panel panel-partner view active staff-partner" id="company-view" aria-labelledby="company-title">
-        <a id="partner"></a>
-        <div class="panel-head"><h2 id="company-title">New order</h2><span class="muted small" id="order-id-label"></span></div>
-        <p class="muted small" id="partner-lead">Hi <strong id="partner-name">Energy partner</strong>. A customer picked one of your plans.</p>
-        <div id="order-card"></div>
-        <div class="call-script" id="call-script"></div>
-        <div class="answer-row" id="partner-actions"></div>
-        <div id="partner-issues"></div>
-        <div class="section-label timeline-label"><span>History</span></div>
-        <ol class="timeline" id="job-timeline"></ol>
-        <details class="fold">
-          <summary><span>Your plans</span><span class="muted small">prices customers see</span></summary>
-          <form id="offers-form" class="feed-form">
-            <div class="plan-table" id="plan-rows"></div>
-            <button class="text-button add-plan" id="add-plan" type="button">+ Add a plan</button>
-            <textarea id="offers-input" hidden></textarea>
-            <div class="company-actions"><span class="form-message" id="offers-message" role="status"></span><button class="button button-primary" type="submit">Save plans</button></div>
-          </form>
-        </details>
-        <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
-      </section>
-    
->>>>>>> e4377eaf981cd552dcf84ac81c76d104ac0b127b
     <footer class="app-footer">Reltix · local demo · sample data</footer>
   </div>
 </body>
