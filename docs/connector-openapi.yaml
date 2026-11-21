@@ -263,6 +263,10 @@ components:
         kind: {type: string, enum: [sell, deliver]}
         requested_start: {type: string, format: date, description: sell only}
         subject: {$ref: '#/components/schemas/Subject'}
+        partner_data:
+          type: object
+          description: Catalogue values projected to exactly the fields in the selected offer's required_inputs
+          additionalProperties: true
         previous_contract:
           type: object
           properties:

@@ -651,3 +651,32 @@ button.kpi:focus-visible { outline: 2px solid var(--accent); }
 .qr-missing { display: grid; gap: 6px; padding: 18px 8px; text-align: center; color: var(--ink); }
 .qr-missing span { color: var(--muted); font-size: 0.85rem; }
 .phone-pop .mini-btn:disabled, .phone-pop select:disabled { opacity: .5; }
+
+/* Data quality and human review workflow */
+.review-queue { margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); }
+.review-item { margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.review-item.urgent { border-color: rgba(244,63,94,.55); }
+.review-item-head, .quality-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.review-item-head > div { display: grid; gap: 3px; }
+.review-item p, .quality-item p { margin: 8px 0 5px; color: var(--muted); font-size: .85rem; }
+.review-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 10px; }
+.review-form input { min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: var(--surface-2); font: inherit; font-size: .82rem; }
+.review-form .form-message { grid-column: 1 / -1; }
+.quality-list { display: grid; gap: 8px; padding-top: 8px; }
+.quality-item { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.quality-item strong { font-size: .86rem; }
+.quality-item .small { display: block; line-height: 1.5; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* review notes + data checks inside "Needs you" */
+.ib-note { grid-column: 1 / -1; display: flex; gap: 6px; margin: 0; }
+.ib-note[hidden] { display: none; }
+.ib-note input { flex: 1; min-width: 0; min-height: 32px; padding: 0 10px; font: inherit; font-size: 0.85rem; }
+.ib-note .form-message { align-self: center; font-size: 0.8rem; }
+.data-checks { border: 1px dashed var(--line-strong); border-radius: 14px; padding: 0 12px; }
+.data-checks summary { display: flex; justify-content: space-between; gap: 10px; padding: 12px 2px; cursor: pointer; font-weight: 600; list-style: none; }
+.data-checks summary::-webkit-details-marker { display: none; }
+.data-checks[open] { padding-bottom: 10px; }
+.data-checks .inbox-item { margin-top: 8px; }
+.row-menu button { padding: 7px 10px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-size: 0.85rem; text-align: left; cursor: pointer; }
+.row-menu button:hover { background: var(--accent-soft); }

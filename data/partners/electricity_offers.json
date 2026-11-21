@@ -1,7 +1,9 @@
 {
   "partner_id": "partner_example_energy",
   "partner": "Example Green Energy GmbH",
+  "kind": "sell",
   "category": "electricity",
+  "channel": "voice",
   "offers": [
     {
       "offer_id": "green_home_12_12m",
@@ -10,7 +12,8 @@
       "contract_months": 12,
       "renewable_share_percent": 100,
       "available_from": null,
-      "requires_meter_reading": true
+      "requires_meter_reading": true,
+      "required_inputs": ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date"]
     },
     {
       "offer_id": "flex_home_12_12m",
@@ -19,7 +22,8 @@
       "contract_months": 12,
       "renewable_share_percent": 50,
       "available_from": null,
-      "requires_meter_reading": true
+      "requires_meter_reading": true,
+      "required_inputs": ["tenant.name", "unit.address", "meter.number", "meter.switch_reading", "start_date"]
     }
   ]
 }

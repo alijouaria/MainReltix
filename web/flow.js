@@ -680,6 +680,7 @@ function renderNetwork() {
 
 const EVENT_TITLES = {
   detected: "Renewal window detected", call_queued: "Call queued for Mia",
+  staff_review: "Staff review logged",
   call: "Call", choice: "Plan chosen on the call", case: "Resident file updated", reading: "Meter reading", link: "Link sent", declined: "Resident declined",
   callback: "Callback requested", handoff: "Needs a person", consent: "Consent given and signed", order: "Order sent to partner",
   received: "Partner accepted", needs_input: "Partner needs input", confirmed: "Contract confirmed", rejected: "Partner declined",
@@ -782,6 +783,7 @@ function renderPortfolio() {
   const run = portfolio.run;
   const results = run?.results || [];
   const calls = portfolio.mia_calls || [];
+  const reviews = portfolio.review_queue || [];
   const callFor = (uid) => calls.filter((c) => c.unit_id === uid).slice(-1)[0];
 
   // header + toolbar are built once, so typing in the search box never loses focus
@@ -821,7 +823,7 @@ function renderPortfolio() {
       <span class="fr-actions">
         ${canCall ? `<button type="button" class="mini-btn" data-callnow="${r.unit_id}" title="Mia calls ${esc(r.tenant)} now">☎ Call</button>` : ""}
         <details class="row-menu"><summary aria-label="Open views">⋯</summary><div>
-          <a href="/reltix?unit=${r.unit_id}#case">Case</a>${r.tenant ? `<a href="/tenant?unit=${r.unit_id}" target="_blank" rel="noopener">Resident view</a><a href="/supplier?unit=${r.unit_id}">Supplier view</a><a href="/owner?unit=${r.unit_id}">Owner view</a>` : ""}
+          <a href="/reltix?unit=${r.unit_id}#case">Case</a>${r.tenant ? `<button type="button" data-qr="${r.unit_id}">📱 QR for phone</button><a href="/tenant?unit=${r.unit_id}" target="_blank" rel="noopener">Resident view</a><a href="/supplier?unit=${r.unit_id}">Supplier view</a><a href="/owner?unit=${r.unit_id}">Owner view</a>` : ""}
         </div></details>
       </span></div>`;
   }).join("") || `<p class="muted small empty">${q ? `No flat matches “${esc(flats.query)}”.` : "Nothing here."}</p>`;
@@ -850,32 +852,57 @@ function renderKpis() {
     tile("all", "◎", run.scanned, "Flats checked", `${run.matched} renewals due today`),
     tile("matched", "☎", calls.length, "Calls by Mia", `${calls.filter((c) => ["answered", "done"].includes(c.status)).length} answered · ${k.support_calls || 0} other calls`, "cyan"),
     tile("partner", "✓", k.signed || 0, "Contracts signed", k.monthly_saving_eur ? `€${Math.round(k.monthly_saving_eur * 12)} saved per year` : `${k.active || 0} running`, "emerald"),
-    tile("inbox", "!", (portfolio.inbox || []).length, "Need a person", `${k.issues_open || 0} open complaints`, "amber"),
+    tile("inbox", "!", (portfolio.review_queue || []).filter((i) => !["provenance", "data"].includes(i.category)).length, "Need a person",
+      `${(portfolio.review_queue || []).filter((i) => ["provenance", "data"].includes(i.category)).length} data checks · ${k.issues_open || 0} open complaints`, "amber"),
   ].join("");
   if (kpis.dataset.html !== html) { kpis.dataset.html = html; kpis.innerHTML = html; }
 }
 
-// "Needs you": everything centrix and Mia couldn't finish alone, with one-click actions.
-const INBOX_KIND = { flag: ["⚠", "Flagged by the daily check"], issue: ["🔧", "Complaint"], needs_person: ["🙋", "Asked for a person"] };
+// "Needs you": Ataberk's review queue (auditable: every item closes with a short note) plus the daily check's flags.
+// Urgent first; the per-flat "check record sources" items fold into one Data checks row so the list stays short.
+const REVIEW_ICON = { issue: "🔧", flag: "⚠", coverage: "📍", case: "🙋", order: "📄", data: "✎", provenance: "🗂" };
+const REVIEW_RANK = { issue: 0, case: 1, order: 2, coverage: 3, flag: 4, data: 5, provenance: 6 };
+let dataChecksOpen = false;
+function reviewCard(item, names) {
+  return `<div class="inbox-item ${item.severity === "urgent" ? "urgent" : ""} ${esc(item.category)}">
+    <span class="ib-icon" aria-hidden="true">${REVIEW_ICON[item.category] || "•"}</span>
+    <div class="ib-body"><strong>${flatId(item.unit_id)} · ${esc(names[item.unit_id] || "Vacant")}</strong>
+      <span class="ib-kind">${item.severity === "urgent" ? "Urgent · " : ""}${esc(item.title)}</span><p>${esc(item.reason)}</p></div>
+    <div class="ib-actions">
+      <a class="mini-btn" href="/reltix?unit=${item.unit_id}#case">Open case</a>
+      <button type="button" class="mini-btn primary" data-review-open="${esc(item.review_id)}">✓ Done</button>
+    </div>
+    <form class="review-form ib-note" data-review="${esc(item.review_id)}" data-unit="${esc(item.unit_id)}" hidden>
+      <input name="note" maxlength="300" minlength="5" required value="Checked and handled" aria-label="What did you check or do?">
+      <button class="mini-btn primary" type="submit">Save</button><span role="status" class="form-message"></span>
+    </form></div>`;
+}
 function renderInbox() {
   const box = document.getElementById("inbox-list");
   if (!box || !portfolio) return;
-  const items = portfolio.inbox || [];
-  const html = items.length ? items.map((i) => {
-    const [icon, kind] = INBOX_KIND[i.kind] || ["•", i.kind];
-    return `<div class="inbox-item ${i.urgent ? "urgent" : ""} ${i.kind}">
-      <span class="ib-icon" aria-hidden="true">${icon}</span>
-      <div class="ib-body"><strong>${flatId(i.unit_id)} · ${esc(i.tenant)}</strong><span class="ib-kind">${i.urgent ? "Urgent · " : ""}${kind}</span><p>${esc(i.text)}</p></div>
-      <div class="ib-actions">
-        <a class="mini-btn" href="/reltix?unit=${i.unit_id}#case">Open case</a>
-        <button type="button" class="mini-btn primary" data-handled="${i.kind}" data-unit="${i.unit_id}" data-issue="${esc(i.issue_id || "")}">✓ Mark handled</button>
-      </div></div>`;
-  }).join("") : `<div class="inbox-empty"><strong>All clear.</strong><span>Nothing needs a person right now. Mia and centrix are handling the rest.</span></div>`;
+  if (box.querySelector(".ib-note:not([hidden])")) return; // don't redraw while someone is typing a note
+  const names = Object.fromEntries((portfolio.run?.results || []).map((r) => [r.unit_id, r.tenant]));
+  const all = (portfolio.review_queue || []).slice().sort((x, y) => (x.severity === "urgent" ? -1 : 0) - (y.severity === "urgent" ? -1 : 0)
+    || (REVIEW_RANK[x.category] ?? 9) - (REVIEW_RANK[y.category] ?? 9));
+  const DATA = ["provenance", "data"];   // record checks: important, but not today's work
+  const main = all.filter((i) => !DATA.includes(i.category));
+  const sources = all.filter((i) => DATA.includes(i.category));
+  const html = (main.length ? main.map((i) => reviewCard(i, names)).join("")
+      : `<div class="inbox-empty"><strong>All clear.</strong><span>Nothing needs a person right now. Mia and centrix are handling the rest.</span></div>`)
+    + (sources.length ? `<details class="data-checks" ${dataChecksOpen ? "open" : ""}><summary><span>🗂 Data checks</span><span class="muted small">${sources.length} record ${sources.length === 1 ? "check" : "checks"} across ${new Set(sources.map((i) => i.unit_id)).size} flats</span></summary>${sources.map((i) => reviewCard(i, names)).join("")}</details>` : "");
   if (box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
-  byId("inbox-sub").textContent = items.length ? `${items.length} ${items.length === 1 ? "item" : "items"}${items.some((i) => i.urgent) ? " · urgent first" : ""}` : "";
+  byId("inbox-sub").textContent = main.length ? `${main.length} ${main.length === 1 ? "item" : "items"}${main.some((i) => i.severity === "urgent") ? " · urgent first" : ""}` : "";
   const count = document.getElementById("nav-inbox-count");
-  if (count) count.textContent = items.length || "";
+  if (count) count.textContent = main.length || "";
 }
+document.addEventListener("toggle", (event) => { if (event.target.classList?.contains("data-checks")) dataChecksOpen = event.target.open; }, true);
+document.addEventListener("click", (event) => {
+  const open = event.target.closest("[data-review-open]");
+  if (!open) return;
+  const form = open.closest(".inbox-item").querySelector(".ib-note");
+  form.hidden = !form.hidden;
+  if (!form.hidden) { const input = form.querySelector("input"); input.focus(); input.select(); }
+});
 
 // Live activity: what residents, Mia and the supplier did, across all flats. New entries also pop up as toasts.
 let feedSeen = null;
@@ -962,7 +989,7 @@ function render() {
 
 document.addEventListener("submit", async event => {
   const form = event.target;
-  if (form.id !== "problem-form" && form.id !== "finish-dropped-call" && !form.dataset.issue) return;
+  if (form.id !== "problem-form" && form.id !== "finish-dropped-call" && !form.dataset.issue && !form.dataset.review) return;
   event.preventDefault();
   const button = form.querySelector("button");
   if (button.disabled) return;
@@ -970,7 +997,12 @@ document.addEventListener("submit", async event => {
   const data = new FormData(form);
   const feedback = form.querySelector('[role="status"]') || byId("issue-feedback");
   try {
-    if (form.id === "problem-form") {
+    if (form.dataset.review) {
+      const note = String(data.get("note") || "").trim();
+      await post(`/api/reviews/${form.dataset.review}`, { unit_id: form.dataset.unit, note });
+      form.hidden = true;
+      await loadPortfolio(); await refreshState();
+    } else if (form.id === "problem-form") {
       const text = String(data.get("text") || "").trim();
       const ids = complaintFormIds(text);
       await post("/api/issues", { unit_id: UNIT, text: data.get("text"), source: "simulated phone",
@@ -1003,15 +1035,15 @@ async function renderPhonePop() {
   try { tunnelUrl = (await (await fetch("/api/tunnel", { cache: "no-store" })).json()).url; } catch { tunnelUrl = null; }
   const select = byId("phone-flat");
   const residents = (portfolio?.run?.results || []).filter((r) => r.tenant);
-  if (!select.options.length && residents.length) {
+  if (select.options.length !== residents.length && residents.length) {
+    const keep = select.value;
     const first = residents.find((r) => r.decision === "matched") || residents[0];
-    select.innerHTML = residents.map((r) => `<option value="${r.unit_id}" ${r.unit_id === (PINNED_UNIT || first.unit_id) ? "selected" : ""}>${flatId(r.unit_id)} · ${esc(r.tenant)}${r.decision === "matched" ? " · Mia calling" : ""}</option>`).join("");
+    select.innerHTML = residents.map((r) => `<option value="${r.unit_id}" ${r.unit_id === (keep || PINNED_UNIT || first.unit_id) ? "selected" : ""}>${flatId(r.unit_id)} · ${esc(r.tenant)}${r.decision === "matched" ? " · Mia calling" : ""}</option>`).join("");
   }
   const qr = byId("phone-qr");
   const link = tunnelUrl ? `${tunnelUrl}/tenant?unit=${select.value || "unit_1a"}` : "";
   byId("phone-url").value = link || "No phone link";
   byId("phone-copy").disabled = !link;
-  select.disabled = !link;
   if (!link) {
     // A localhost link can't work on a phone (it would point at the phone itself), so show no QR at all.
     qr.dataset.link = "";
@@ -1040,6 +1072,23 @@ document.addEventListener("click", async (event) => {
   if (!event.target.closest(".phone-menu")) pop.hidden = true;
 });
 document.addEventListener("change", (event) => { if (event.target.id === "phone-flat") renderPhonePop(); });
+async function openPhoneFor(unitId) {
+  const pop = document.getElementById("phone-pop");
+  if (!pop) return;
+  pop.hidden = false;
+  byId("phone-btn").setAttribute("aria-expanded", "true");
+  await renderPhonePop();
+  const select = byId("phone-flat");
+  if ([...select.options].some((o) => o.value === unitId)) { select.value = unitId; await renderPhonePop(); }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+document.addEventListener("click", (event) => {
+  const qrBtn = event.target.closest("[data-qr]");
+  if (!qrBtn) return;
+  event.stopPropagation();
+  qrBtn.closest("details")?.removeAttribute("open");
+  openPhoneFor(qrBtn.dataset.qr);
+}, true);
 
 /* ---------- staff dashboard: "Open case" lands on the case panel ---------- */
 // Case links end in #case. Once the flat has loaded, scroll to its case and flash it so you see what changed.
