@@ -64,18 +64,8 @@
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.96.35 1.9.68 2.79a2 2 0 0 1-.45 2.11L8.07 9.93a16 16 0 0 0 6 6l1.31-1.31a2 2 0 0 1 2.11-.45c.89.33 1.83.56 2.79.68A2 2 0 0 1 22 16.92Z"/></svg>
             Call AI agent
           </button>
-          <p class="call-agent-note" id="call-agent-note">Use a microphone for a live call, or try the local simulation below.</p>
-          <details class="fold" id="complaint-demo">
-            <summary>Simulate complaint call</summary>
-            <form id="problem-form" class="feed-form">
-              <label>Mia asks what went wrong<textarea name="text" required maxlength="300" rows="3"></textarea></label>
-              <div id="share-option" hidden><label class="consent"><input name="share" type="checkbox"><span>Share this complaint with my energy supplier and ask for a reply.</span></label></div>
-              <div class="answer-row"><button class="text-button" type="button" data-sim-disconnect="unsaved">Simulate disconnect before saving</button><button class="text-button" type="button" data-sim-disconnect="saved">Save note, then disconnect</button></div>
-              <button class="button button-primary" type="submit">Finish demo call</button>
-            </form>
-          </details>
+          <p class="call-agent-note" id="call-agent-note">Use your microphone to describe the problem to Mia.</p>
           <p class="form-message" id="issue-feedback" role="status"></p>
-          <div id="complaint-recovery"></div>
           <div id="issue-list"></div>
         </div>
       </section>

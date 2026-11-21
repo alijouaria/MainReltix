@@ -62,7 +62,7 @@ async function reportIssue({ text = "", urgent = false, reason = "" }) {
 
 async function startCall() {
   if (!window.ElevenLabsClient) {
-    call.error = "Voice is unavailable. Open Simulate complaint call below.";
+    call.error = "Voice calling is unavailable right now. Please try again later.";
     return render();
   }
   Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: crypto.randomUUID() });
@@ -93,7 +93,7 @@ async function startCall() {
       onError: (message) => { call.error = String(message); renderCall(); },
     });
   } catch (error) {
-    Object.assign(call, { status: "idle", error: `Couldn't start the call: ${error.message || error}. You can use Simulate complaint call below.` });
+    Object.assign(call, { status: "idle", error: `Couldn't start the call: ${error.message || error}. Please try again later.` });
     render();
   }
 }
@@ -120,7 +120,7 @@ function renderCall() {
     actions = "";
   } else {
     head = "<strong>Mia, your reltix assistant</strong><span class='muted small'>Report a problem or ask the property team to contact your supplier.</span>";
-    actions = '<a class="button" href="#complaint-title">Report a problem</a>';
+    actions = "";
   }
   card.innerHTML = `
     <div class="call-head"><span class="call-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg></span><div>${head}</div><div class="call-actions">${actions}</div></div>
@@ -742,7 +742,6 @@ setInterval(() => {
   if (!document.getElementById("portfolio")?.contains(document.activeElement)) loadPortfolio();
 }, 2500);
 loadPortfolio();
-if (location.hash === "#complaint-demo" && ROLE === "tenant") byId("complaint-demo").open = true;
 
 window.flow = { render, renderPartner, chooseOffer, syncOfferVersion };
 render();

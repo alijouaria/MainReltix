@@ -1,6 +1,6 @@
 # Mia · tenant complaint calls
 
-This branch keeps main’s ElevenLabs browser client for resident-initiated calls. The energy supplier call is a local simulation. Use **Simulate complaint call** for an entirely local walkthrough.
+This branch uses the ElevenLabs browser client for resident-initiated complaint calls. The energy supplier call remains a local simulation.
 
 ## Agent configuration for this flow
 
