@@ -8,7 +8,7 @@ Run `python main.py --demo-date 2026-12-01` with Python 3.10 or later and open <
 
 The home page links to the tenant, staff, owner and supplier workspaces. The staff dashboard also links each workspace to its selected flat. See [the walkthrough](DEMO.md) for the full handover.
 
-The local simulation uses Python’s standard library and sample JSON. It works without a microphone or API keys. **Call AI agent** uses the existing ElevenLabs browser integration and requires microphone and network access. **Simulate complaint call** runs locally. Supplier calls and orders are simulated. The optional resident chat uses a local Ollama instance with `qwen2.5:0.5b`.
+The local simulation uses Python’s standard library and sample JSON. It works without a microphone or API keys. **Call AI agent** uses the existing ElevenLabs browser integration and requires microphone and network access. Complaint calls use the live voice agent. Supplier calls and orders are simulated. The optional resident chat uses a local Ollama instance with `qwen2.5:0.5b`.
 
 ## Demo data
 

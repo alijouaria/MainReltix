@@ -1019,7 +1019,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         if path == "/phone":
             unit_id = parse_qs(parsed.query).get("unit", ["unit_4b"])[0]
             self.send_response(302)
-            self.send_header("Location", "/tenant?" + urlencode({"unit": unit_id}) + "#complaint-demo")
+            self.send_header("Location", "/tenant?" + urlencode({"unit": unit_id}) + "#complaint-title")
             self.end_headers()
             return
         if path == "/api/state":

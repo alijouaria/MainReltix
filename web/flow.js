@@ -245,7 +245,7 @@ function simulateCall() {
 
 async function startCall(reason = "renewal") {
   if (!window.ElevenLabsClient) {
-    call.error = reason === "problem" ? "Voice is unavailable. Open Simulate complaint call below." : "Voice is unavailable. Use “No mic? Simulate” instead.";
+    call.error = reason === "problem" ? "Voice calling is unavailable right now. Please try again later." : "Voice is unavailable. Use “No mic? Simulate” instead.";
     return render();
   }
   const contract = currentContract();
@@ -287,7 +287,7 @@ async function startCall(reason = "renewal") {
       onError: (message) => { call.error = String(message); renderCall(); },
     });
   } catch (error) {
-    Object.assign(call, { status: "idle", incoming: null, error: `Couldn't start the call: ${error.message || error}.` });
+    Object.assign(call, { status: "idle", incoming: null, error: `Couldn't start the call: ${error.message || error}. Please try again later.` });
     render();
   }
 }
@@ -320,9 +320,8 @@ function renderCall() {
     head = `<strong>${call.simulated ? "Call (simulated)" : "Call with Mia"} · ended</strong><span class="muted small">${call.linkSent ? `Link sent by ${esc(call.linkSent)} · this page picks up where the call left off.` : "Your choices are saved below."}</span>`;
     actions = state.offer_available ? `<button class="text-button" type="button" data-call="start">Call Mia again</button>` : "";
   } else {
-    head = "<strong>Mia, your reltix assistant</strong><span class='muted small'>Calls you when your contract is ending, takes complaints, and passes everything to the right person.</span>";
-    actions = (state.offer_available ? '<button class="button button-primary" type="button" data-call="start">Talk to Mia about my renewal</button>' : "")
-      + '<a class="button" href="#complaint-title">Report a problem</a>';
+    head = "<strong>Mia, your reltix assistant</strong><span class='muted small'>Calls you when your contract is ending and takes complaints by voice.</span>";
+    actions = state.offer_available ? '<button class="button button-primary" type="button" data-call="start">Talk to Mia about my renewal</button>' : "";
   }
   card.classList.toggle("ringing", !!call.incoming && idleish());
   card.innerHTML = `
@@ -1276,7 +1275,6 @@ setInterval(() => {
   if (document.activeElement?.id !== "demo-date") loadPortfolio();
 }, 2500);
 loadPortfolio();
-if (location.hash === "#complaint-demo" && ROLE === "tenant") byId("complaint-demo").open = true;
 
 window.flow = { render, renderPartner, chooseOffer, syncOfferVersion };
 render();
