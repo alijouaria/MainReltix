@@ -118,7 +118,7 @@ const clientTools = {
   record_choice: ({ offer_id }) => {
     const offer = selectOffer(String(offer_id));
     if (!offer) return "Unknown offer_id. Call get_offers and use one of those ids.";
-    saveCase({ chosen_offer_id: offer.offer_id });
+    saveCase({ chosen_offer_id: offer.offer_id, offer_version: offer.offer_version });
     render();
     return `Saved: ${offer.product}.`;
   },
@@ -147,6 +147,22 @@ const clientTools = {
     try { await post("/api/reading", { unit_id: UNIT, value_kwh: value, source: "voice" }); await refreshState(); }
     catch (error) { return `Couldn't save it: ${error.message}. Tell them they can add it in the portal.`; }
     return `Saved meter reading ${value} kWh.`;
+  },
+  // Memory: Mia can look up what this resident chose, signed, reported or asked for, as it stands right now.
+  get_customer_status: async () => {
+    await refreshState();
+    return state.agent_variables?.customer_status || "No record for this resident.";
+  },
+  // The resident says a problem they reported is fixed: close that complaint.
+  resolve_issue: async ({ issue_id, note }) => {
+    const open = (state.unit?.issues || []).filter((i) => !i.resolved);
+    const issue = open.find((i) => i.issue_id === issue_id) || (open.length === 1 ? open[0] : null);
+    if (!issue) return open.length ? `Which one? Open complaints: ${open.map((i) => `${i.issue_id}: ${i.text}`).join("; ")}` : "There are no open complaints.";
+    try {
+      await post("/api/issues", { unit_id: UNIT, issue_id: issue.issue_id, resolved: true, note: String(note || ""), source: "voice" });
+      await refreshState();
+      return `Marked as fixed: ${issue.text}`;
+    } catch (error) { return `Couldn't update it: ${error.message}`; }
   },
   save_note: ({ note }) => {
     if (!note) return "Nothing to save.";
@@ -274,7 +290,7 @@ function simulateCall() {
     { who: "You", text: "Yes, by SMS please." },
   ] });
   selectOffer(offer.offer_id);
-  saveCase({ chosen_offer_id: offer.offer_id, preferred_channel: "SMS" });
+  saveCase({ chosen_offer_id: offer.offer_id, offer_version: offer.offer_version, preferred_channel: "SMS" });
   logEvent("call", `(Simulated) Mia called ${state.unit.tenant.name}; chose ${offer.product}; link sent by SMS.`);
   render();
 }
@@ -298,9 +314,15 @@ async function startCall(reason = "renewal") {
   Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: newComplaintId(),
     eventNumber: 0, pendingEvent: null, recovery: null, reason, simulated: false, linkSent: null });
   render();
+  await refreshState().catch(() => {});   // Mia starts with the latest record (choices, complaints, notes)
   const vars = { ...state.agent_variables };
   if (reason === "problem") {
-    Object.assign(vars, { call_reason: "problem_report", first_message: `Hi ${firstName()}, this is Mia. What happened, and where?` });
+    const open = (state.unit?.issues || []).filter((i) => !i.resolved);
+    const last = open[open.length - 1];
+    const topic = last ? last.text.replace(/[.!?].*$/, "").toLowerCase().split(" ").slice(0, 8).join(" ") : "";
+    Object.assign(vars, { call_reason: "problem_report", first_message: last
+      ? `Hi ${firstName()}, it's Mia from reltix. Is this about the ${topic.startsWith("the ") ? topic.slice(4) : topic} you reported, or something new?`
+      : `Hi ${firstName()}, it's Mia from reltix. What's going on at home?` });
     logEvent("call", `${state.unit.tenant.name} called Mia to report a problem.`);
   } else if (reason === "callback") {
     Object.assign(vars, { call_reason: "callback", first_message: `Hi ${firstName()}, it's Mia from reltix again, calling you back as promised about your electricity contract. Is now a better time?` });
@@ -461,6 +483,10 @@ function renderIssues() {
     const html = items.map(i => {
       const assignee = i.owner === "partner" || i.shared_order_id ? "partner" : "reltix";
       const to = assignee === "partner" ? "supplier" : "property team";
+      if (i.resolved && !i.reply) {
+        return `<details class="fold resolved"${audience === "reltix" ? ` id="reply-${esc(i.issue_id)}"` : ""}><summary>✓ Fixed · ${esc(i.text.slice(0, 48))}</summary>
+        <p>${esc(i.text)}</p><p class="muted small">Resident said it's fixed${i.resolved.source ? ` (${esc(i.resolved.source)})` : ""}${i.resolved.note ? `: ${esc(i.resolved.note)}` : ""}.</p></details>`;
+      }
       const reply = i.reply ? `<p><strong>Reply from ${to}</strong> · ${esc(i.reply)}</p>` : "";
       const handoff = !i.reply && i.ownership_reason ? `<p class="muted small">The supplier order ended. The ${esc(to)} will reply. ${esc(i.ownership_reason)}</p>` :
         !i.reply ? `<p class="muted small">This complaint is with the ${esc(to)}.</p>` : "";
@@ -762,6 +788,7 @@ const EVENT_TITLES = {
   start_date_mismatch: "Supplier proposed a different start date",
 };
 
+let timelineAll = false;
 function renderManager() {
   if (!state.unit || !document.getElementById("case-timeline")) return;
   const events = state.events || [];
@@ -770,9 +797,27 @@ function renderManager() {
   const detected = { type: "detected", at: null, channel: "centrix", text: `Contract with ${contract.supplier} ends ${prettyDate(contract.expiry_date)} (${remaining} days). Case opened ${contract.renewal_notice_days || 30} days before expiry.` };
   const all = !state.offer_available || events.some((e) => e.type === "detected") ? events : [detected, ...events];
   byId("landlord-title").textContent = `Flat ${UNIT.replace("unit_", "").toUpperCase()}${state.unit.tenant?.name ? ` · ${state.unit.tenant.name}` : ""}${state.following ? " · live" : ""}`;
-  byId("case-count").textContent = events.length ? `${events.length} ${events.length === 1 ? "step" : "steps"} · 0 by you` : "Waiting for the resident";
-  byId("case-timeline").innerHTML = all.slice().reverse().map((e) => `
-    <li><strong>${esc(e.type === "detected" ? "Expiry detected" : EVENT_TITLES[e.type] || e.type)}</strong><span class="muted">${e.at ? `${new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(e.channel)} · ` : ""}${esc(e.text)}</span></li>`).join("");
+  byId("case-count").textContent = events.length || "";
+  // Condensed timeline: repeated steps of the same kind (calls, file updates…) fold into one line you can expand.
+  const groups = [];
+  for (const e of all.slice().reverse()) {
+    const last = groups[groups.length - 1];
+    if (last && last.type === e.type) last.items.push(e); else groups.push({ type: e.type, items: [e] });
+  }
+  const hhmm = (at) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const title = (t) => (t === "detected" ? "Expiry detected" : EVENT_TITLES[t] || t);
+  const line = (e) => `${e.at ? `${hhmm(e.at)} · ${esc(e.channel)} · ` : ""}${esc(e.text)}`;
+  const shownGroups = timelineAll ? groups : groups.slice(0, 8);
+  byId("case-timeline").innerHTML = shownGroups.map((g) => {
+    const e = g.items[0];
+    const cls = /issue|attention|handoff/.test(g.type) ? "warn" : /active|consent|confirmed|filed|issue_resolved/.test(g.type) ? "good" : /call|callback/.test(g.type) ? "call" : "";
+    if (g.items.length === 1) return `<li class="${cls}"><strong>${esc(title(g.type))}</strong><span class="muted">${line(e)}</span></li>`;
+    return `<li class="${cls}"><details class="tl-group"><summary><strong>${esc(title(g.type))} <span class="tl-x">×${g.items.length}</span></strong><span class="muted">latest ${line(e)}</span></summary>
+      <ul>${g.items.slice(1).map((x) => `<li class="muted small">${line(x)}</li>`).join("")}</ul></details></li>`;
+  }).join("") || `<li class="muted small">Nothing yet. Steps appear here as the resident, Mia and the supplier act.</li>`;
+  const tl = byId("tl-toggle");
+  tl.hidden = groups.length <= 8;
+  tl.textContent = timelineAll ? "Show less" : `Show all ${groups.length}`;
 
   const order = latestOrder();
   const status = byId("landlord-renewal-status");
@@ -790,7 +835,8 @@ function renderManager() {
   if (!told) {
     told = document.createElement("div");
     told.id = "resident-said";
-    document.querySelector("#landlord-view .status-list")?.insertAdjacentElement("afterend", told);
+    const slot = document.getElementById("resident-said-slot");
+    if (slot) slot.appendChild(told); else document.querySelector("#landlord-view .status-list")?.insertAdjacentElement("afterend", told);
   }
   const chosen = offers().find((o) => o.offer_id === c.chosen_offer_id);
   const reading = electricityMeter().switch_reading || {};
@@ -802,7 +848,7 @@ function renderManager() {
     c.declined && ["Declined", c.declined_reason || "yes"],
     c.needs_person && ["Needs a person", c.needs_person],
     ...(c.notes || []).slice(-5).map((n) => ["Note", `${n.text} (${n.source})`]),
-    ...(state.issues || []).slice(-5).map((i) => [i.urgent ? "⚠ Urgent problem" : "Problem reported", `${i.text} (${new Date(i.reported_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })})`]),
+    ...(state.issues || []).slice(-5).map((i) => [i.resolved ? "✓ Fixed" : i.urgent ? "⚠ Urgent problem" : "Problem reported", `${i.text} (${new Date(i.reported_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })})`]),
   ].filter(Boolean);
   told.innerHTML = facts.length ? `<div class="section-label"><span>What the resident told us</span><span class="count-label">updated ${esc(new Date(c.updated_at || Date.now()).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }))}</span></div>
     <div class="detail-list told">${facts.map(([k, v]) => `<div class="detail-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div>` : "";
@@ -822,6 +868,22 @@ function renderManager() {
     byId("landlord-price").textContent = `${running.product} · ${money(running.current_monthly_price_eur)} / month${running.start ? ` · from ${prettyDate(running.start)}` : ""}`;
   }
   byId("contract-count").textContent = `${energy.length}`;
+  const openIssues = (state.issues || []).filter((i) => !i.reply && !i.resolved);
+  const cc = document.getElementById("complaint-count");
+  if (cc) { cc.textContent = openIssues.length || ""; cc.classList.toggle("hot", openIssues.some((i) => i.urgent)); }
+  const none = document.getElementById("no-complaints");
+  if (none) none.hidden = (state.issues || []).length > 0;
+  if (document.getElementById("case-actions")) {
+    const lastCall = (state.mia_calls || []).slice(-1)[0];
+    const busy = lastCall && ["queued", "ringing"].includes(lastCall.status);
+    setHtml("case-actions", state.unit.tenant ? `
+      <button type="button" class="mini-btn primary" data-callnow="${UNIT}" ${busy ? "disabled" : ""}>☎ ${busy ? "Mia is calling…" : "Mia calls now"}</button>
+      <button type="button" class="mini-btn" data-qr="${UNIT}">📱 QR for phone</button>
+      <a class="mini-btn" href="/tenant?unit=${UNIT}" target="_blank" rel="noopener">Resident view ↗</a>
+      <a class="mini-btn" href="/reltix?unit=${UNIT}#partner">Supplier order</a>` : `<span class="muted small">Vacant flat. Nothing to call.</span>`);
+  }
+  const navCase = document.getElementById("nav-case-flat");
+  if (navCase) navCase.textContent = flatId(UNIT);
   byId("contract-list").innerHTML = energy.map((c) => `<div class="detail-row"><span><span class="badge ${c.status === "active" ? "badge-green" : c.status === "ended" ? "" : "badge-amber"}">${esc(c.status)}</span> ${esc(c.supplier)}</span><strong>${esc(c.product)} · ${money(c.current_monthly_price_eur)}/mo · ${c.expiry_date ? `ends ${esc(prettyDate(c.expiry_date))}` : `starts ${esc(prettyDate(c.start))}`}</strong></div>`).join("");
 }
 
@@ -911,6 +973,102 @@ function renderPortfolio() {
   renderInbox();
   renderFeed();
   renderDatebar();
+  renderPipeline();
+  renderCallsCard();
+  renderSoon();
+  renderPartnerBoard();
+}
+
+/* ---------- overview widgets ---------- */
+function setHtml(id, html) {
+  const box = document.getElementById(id);
+  if (box && box.dataset.html !== html) { box.dataset.html = html; box.innerHTML = html; }
+  return box;
+}
+function renderPipeline() {
+  const p = portfolio?.pipeline;
+  if (!p) return;
+  const steps = [["due", "In renewal window", "amber"], ["called", "Mia reached", "cyan"], ["chosen", "Plan chosen", "cyan"], ["signed", "Signed", "emerald"], ["active", "Running", "emerald"]];
+  const max = Math.max(1, p.due, ...steps.map(([k]) => p[k] || 0));
+  setHtml("pipeline", steps.map(([k, label, tone], i) => {
+    const v = p[k] || 0;
+    const prev = i ? p[steps[i - 1][0]] || 0 : 0;
+    const conv = i && prev ? `${Math.round((v / prev) * 100)}%` : "";
+    return `<div class="pipe-row ${tone}"><span class="pipe-label">${label}</span><span class="pipe-bar"><i style="width:${Math.max(v ? 6 : 0, (v / max) * 100)}%"></i></span><strong>${v}</strong><span class="pipe-conv">${conv}</span></div>`;
+  }).join(""));
+}
+function renderCallsCard() {
+  const calls = portfolio?.mia_calls || [];
+  const count = (test) => calls.filter(test).length;
+  const answered = count((c) => ["answered", "done"].includes(c.status));
+  const sms = count((c) => ["declined", "missed", "sms_sent"].includes(c.status));
+  const waiting = count((c) => ["queued", "ringing"].includes(c.status));
+  const total = Math.max(1, calls.length);
+  const sub = document.getElementById("calls-sub");
+  if (sub) sub.textContent = calls.length ? `${calls.length} total` : "none yet";
+  const names = Object.fromEntries((portfolio.run?.results || []).map((r) => [r.unit_id, r.tenant]));
+  const KIND = { renewal: "Renewal", callback: "Callback", manual: "Staff call" };
+  const recent = calls.slice(-3).reverse().map((c) => `<li data-open="${esc(c.unit_id)}" tabindex="0"><span class="cl-dot ${esc(c.status)}"></span><span><strong>${flatId(c.unit_id)} · ${esc(names[c.unit_id] || "")}</strong><small>${esc(KIND[c.kind] || "Call")} · ${esc(CALL_STATE[c.status] || c.status)}</small></span></li>`).join("");
+  setHtml("calls-card", calls.length ? `
+    <div class="stack-bar" role="img" aria-label="${answered} answered, ${sms} sent to SMS, ${waiting} waiting">
+      <i class="ok" style="width:${(answered / total) * 100}%"></i><i class="sms" style="width:${(sms / total) * 100}%"></i><i class="wait" style="width:${(waiting / total) * 100}%"></i></div>
+    <div class="stack-legend"><span><b class="ok"></b>${answered} answered</span><span><b class="sms"></b>${sms} → SMS</span><span><b class="wait"></b>${waiting} waiting</span></div>
+    <ul class="call-list">${recent}</ul>` : `<p class="muted small empty">No calls yet. Run today’s check or press ☎ Call on a flat.</p>`);
+}
+function renderSoon() {
+  const rows = (portfolio?.run?.results || []).filter((r) => r.expiry && r.days_left != null && r.days_left >= 0 && r.tenant)
+    .sort((a, b) => a.days_left - b.days_left).slice(0, 5);
+  setHtml("soon", rows.map((r) => {
+    const pct = Math.max(4, Math.min(100, 100 - (r.days_left / 60) * 100));
+    const tone = r.days_left <= 14 ? "hot" : r.days_left <= 30 ? "warm" : "";
+    return `<div class="soon-row ${tone}" data-open="${r.unit_id}" tabindex="0"><span><strong>${flatId(r.unit_id)}</strong> ${esc(r.tenant)}</span><span class="soon-bar"><i style="width:${pct}%"></i></span><span class="soon-days">${r.days_left} d</span></div>`;
+  }).join("") || `<p class="muted small empty">No contracts ending soon.</p>`);
+}
+
+/* ---------- energy partner page ---------- */
+const BOARD_COLS = [
+  ["new", "New", ["submitted"]],
+  ["progress", "In progress", ["received", "pending", "needs_input"]],
+  ["confirmed", "Confirmed", ["confirmed"]],
+  ["active", "Running", ["active"]],
+  ["closed", "Declined / cancelled", ["rejected", "cancelled"]],
+];
+function renderPartnerBoard() {
+  const orders = portfolio?.orders;
+  if (!orders || !document.getElementById("order-board")) return;
+  const latest = {};
+  orders.forEach((o) => { latest[o.unit_id] = o; });   // one card per flat: its newest order
+  const list = Object.values(latest);
+  const eur = (v) => (v == null ? "—" : `€${Number(v).toFixed(0)}`);
+  setHtml("order-board", BOARD_COLS.map(([key, label, statuses]) => {
+    const cards = list.filter((o) => statuses.includes(o.status));
+    return `<div class="board-col ${key}"><div class="board-head"><span>${label}</span><b>${cards.length}</b></div>
+      ${cards.map((o) => `<a class="order-tile ${o.unit_id === UNIT ? "current" : ""}" href="/reltix?unit=${o.unit_id}#partner">
+        <strong>${flatId(o.unit_id)} · ${esc(o.tenant)}</strong><span>${esc(o.product)} · ${eur(o.price)}/mo</span>
+        <small>${esc(STATUS_TEXT[o.status] || o.status)}${o.start_date_mismatch ? " · ⚠ date" : ""}${o.requested_start ? ` · start ${shortDate(o.requested_start)}` : ""}</small></a>`).join("") || `<span class="board-empty">—</span>`}</div>`;
+  }).join(""));
+  const open = list.filter((o) => ["submitted", "received", "pending", "needs_input"].includes(o.status));
+  const running = list.filter((o) => ["confirmed", "active"].includes(o.status));
+  const volume = running.reduce((sum, o) => sum + (Number(o.price) || 0), 0);
+  const saving = list.filter((o) => !["rejected", "cancelled"].includes(o.status)).reduce((sum, o) => sum + Math.max(0, (Number(o.previous_price) || 0) - (Number(o.price) || 0)), 0);
+  const stat = (label, value, sub, tone = "") => `<div class="pstat ${tone}"><span>${label}</span><strong>${value}</strong><small>${sub}</small></div>`;
+  setHtml("partner-stats", [
+    stat("Need your answer", open.length, open.length ? "answer to keep the start date" : "you're up to date", open.length ? "amber" : ""),
+    stat("Customers won", running.length, `${list.filter((o) => o.status === "active").length} already supplied`, "emerald"),
+    stat("Monthly volume", `€${volume.toFixed(0)}`, "confirmed + running", "cyan"),
+    stat("Residents save", `€${Math.round(saving * 12)}`, "per year vs. old contracts", "emerald"),
+  ].join(""));
+  const sub = document.getElementById("board-sub");
+  if (sub) sub.textContent = `${list.length} ${list.length === 1 ? "flat" : "flats"} · click one to answer`;
+  const nav = document.getElementById("nav-partner-count");
+  if (nav) nav.textContent = open.length || "";
+  renderPlanChart();
+}
+function renderPlanChart() {
+  const plans = state.partner?.offers || [];
+  if (!plans.length) return;
+  const max = Math.max(...plans.map((o) => Number(o.estimated_monthly_price_eur) || 0), 1);
+  setHtml("plan-chart", plans.map((o) => `<div class="plan-bar"><span>${esc(o.product)}</span><span class="pb-track"><i style="width:${((Number(o.estimated_monthly_price_eur) || 0) / max) * 100}%"></i><em style="width:${o.renewable_share_percent || 0}%"></em></span><strong>€${Number(o.estimated_monthly_price_eur || 0).toFixed(0)}</strong><small>${o.renewable_share_percent || 0}% green</small></div>`).join(""));
 }
 
 function renderKpis() {
@@ -1066,6 +1224,7 @@ function render() {
   renderPartner();
   renderManager();
   renderNetwork();
+  if (document.getElementById("plan-chart")) renderPlanChart();
   showCaseIfAsked();
 }
 
@@ -1173,31 +1332,45 @@ document.addEventListener("click", (event) => {
   openPhoneFor(qrBtn.dataset.qr);
 }, true);
 
-/* ---------- staff dashboard: "Open case" lands on the case panel ---------- */
-// Case links end in #case. Once the flat has loaded, scroll to its case and flash it so you see what changed.
-let caseShown = false;
-function showCaseIfAsked() {
-  if (caseShown || location.hash !== "#case" || !state.unit) return;
-  const panel = document.getElementById("landlord-view");
-  if (!panel) return;
-  caseShown = true;
-  panel.scrollIntoView({ behavior: "smooth", block: "start" });
-  panel.classList.add("flash");
-  setTimeout(() => panel.classList.remove("flash"), 1800);
+/* ---------- staff app: one screen per view (sidebar switches views, no long page scroll) ---------- */
+const VIEWS = {
+  overview: ["Overview", "What needs you today, and what Mia and centrix already handled."],
+  flats: ["Flats", "Every flat centrix watches. Search, filter, call or open a case."],
+  case: ["Case", "One flat: what the resident said, every step, contracts and the record."],
+  partner: ["Energy partner", "Orders from residents who picked a plan. Answer them and keep your prices current."],
+};
+function viewFromHash() {
+  const h = location.hash.slice(1);
+  if (h.startsWith("reply-")) return ["case", "complaints"];
+  if (h === "inbox") return ["overview"];
+  return [VIEWS[h] ? h : "overview"];
 }
+function showView(name, tab) {
+  if (!document.body.classList.contains("app")) return;
+  document.body.dataset.view = name;
+  document.querySelectorAll(".view-pane").forEach((p) => { p.hidden = p.dataset.pane !== name; });
+  document.querySelectorAll("[data-view-link]").forEach((a) => a.classList.toggle("active", a.dataset.viewLink === name && a.closest(".side-nav")));
+  const [title, sub] = VIEWS[name];
+  byId("view-title").textContent = name === "case" && state.unit ? `Flat ${flatId(UNIT)}${state.unit.tenant?.name ? ` · ${state.unit.tenant.name}` : ""}` : title;
+  byId("view-sub").textContent = sub;
+  if (tab) selectTab(tab);
+  window.scrollTo(0, 0);
+}
+function selectTab(tab) {
+  document.querySelectorAll("#case-tabs [data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll("[data-tabpane]").forEach((p) => { p.hidden = p.dataset.tabpane !== tab; });
+}
+function showCaseIfAsked() {
+  // keeps the case header in sync once the flat has loaded
+  if (document.body.dataset.view === "case") byId("view-title").textContent = `Flat ${flatId(UNIT)}${state.unit?.tenant?.name ? ` · ${state.unit.tenant.name}` : ""}`;
+}
+window.addEventListener("hashchange", () => { const [v, t] = viewFromHash(); showView(v, t); if (t === "complaints") openLinkedReply(); });
 document.addEventListener("click", (event) => {
-  // Same flat already open: no reload, just jump to the case.
-  const a = event.target.closest('a[href*="#case"]');
-  if (!a) return;
-  const url = new URL(a.href);
-  if (url.pathname === location.pathname && url.searchParams.get("unit") === PINNED_UNIT) {
-    event.preventDefault();
-    caseShown = false; history.replaceState(null, "", url.pathname + url.search + "#case");
-    showCaseIfAsked();
-  }
-}, true);
-
-window.addEventListener("hashchange", () => { caseShown = false; showCaseIfAsked(); });
+  const tab = event.target.closest("#case-tabs [data-tab]");
+  if (tab) return selectTab(tab.dataset.tab);
+  if (event.target.closest("#tl-toggle")) { timelineAll = !timelineAll; renderManager(); }
+});
+if (document.body.classList.contains("app")) { const [v, t] = viewFromHash(); showView(v, t); }
 
 /* ---------- staff dashboard: buttons that do things ---------- */
 document.addEventListener("click", async (event) => {
@@ -1233,18 +1406,16 @@ document.addEventListener("click", async (event) => {
   const kpi = el.closest("[data-kpi]");
   if (kpi) {
     const k = kpi.dataset.kpi;
-    if (k === "partner") return document.getElementById("partner")?.scrollIntoView({ behavior: "smooth" });
-    if (k === "inbox") return document.getElementById("inbox")?.scrollIntoView({ behavior: "smooth" });
+    if (k === "partner") { location.hash = "partner"; return; }
+    if (k === "inbox") { document.getElementById("inbox")?.classList.add("flash"); setTimeout(() => document.getElementById("inbox")?.classList.remove("flash"), 1200); return; }
     flats.filter = k; flats.limit = 10; renderPortfolio();
-    return document.getElementById("flats")?.scrollIntoView({ behavior: "smooth" });
+    location.hash = "flats"; return;
   }
   const node = el.closest(".net-node");
   if (node && !node.classList.contains("core")) {
     if (node.classList.contains("resident")) return window.open(`/tenant?unit=${UNIT}`, "_blank", "noopener");
-    if (node.classList.contains("supplier")) return document.getElementById("partner")?.scrollIntoView({ behavior: "smooth" });
-    const fold = [...document.querySelectorAll("#landlord-view details")].find((d) => /contracts/i.test(d.textContent));
-    if (fold) { fold.open = true; fold.scrollIntoView({ behavior: "smooth", block: "center" }); }
-    return;
+    if (node.classList.contains("supplier")) { location.hash = "partner"; return; }
+    return selectTab("contracts");
   }
   const open = el.closest("[data-open]");
   if (open && open.dataset.open && !el.closest("a,button,details,summary")) location.href = `/reltix?unit=${open.dataset.open}#case`;
@@ -1259,20 +1430,6 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "flat-search") { flats.query = event.target.value; flats.limit = 10; renderPortfolio(); }
 });
 if (document.body.classList.contains("dash")) {
-  // sidebar: smooth scroll + highlight the section you're looking at
-  const links = [...document.querySelectorAll(".side-nav a")];
-  let clickedAt = 0;
-  const setActive = (hash) => links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === hash));
-  links.forEach((a) => a.addEventListener("click", (e) => {
-    e.preventDefault();
-    document.querySelector(a.getAttribute("href"))?.scrollIntoView({ behavior: "smooth", block: "start" });
-    setActive(a.getAttribute("href")); clickedAt = Date.now();
-  }));
-  const spy = new IntersectionObserver((entries) => {
-    const v = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-    if (v && Date.now() - clickedAt > 1500) setActive(`#${v.target.id}`);
-  }, { rootMargin: "-15% 0px -65% 0px" });
-  links.map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean).forEach((t) => spy.observe(t));
   // Live pill: "Live" follows the latest activity; on a pinned flat it offers the way back.
   const pill = document.getElementById("live-pill");
   if (pill && PINNED_UNIT) {

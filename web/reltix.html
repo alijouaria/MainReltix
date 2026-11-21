@@ -11,20 +11,21 @@
   <script src="/vendor/qrcode.js" defer></script>
   <script src="/flow.js" defer></script>
 </head>
-<body data-role="reltix" class="dash">
+<body data-role="reltix" class="dash app" data-view="overview">
   <aside class="sidebar" aria-label="Main navigation">
-    <a class="brand" href="/" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""><span class="brand-sub">centrix</span></a>
-    <p class="nav-label">Menu</p>
+    <a class="brand" href="/reltix" aria-label="Reltix home"><img class="brand-logo" src="/assets/reltix-logo.png" alt=""><span class="brand-sub">centrix</span></a>
+    <p class="nav-label">Workspace</p>
     <nav class="side-nav">
-      <a href="#inbox" class="active"><svg class="icon" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4"/><path d="M5 5h14l1 8v5H4v-5z"/></svg>Needs you<span class="nav-count" id="nav-inbox-count"></span></a>
-      <a href="#overview"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
-      <a href="#flats"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>Flats</a>
-      <a href="#case"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Live case</a>
-      <a href="#partner"><svg class="icon" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Energy partner</a>
+      <a href="#overview" data-view-link="overview" class="active"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview<span class="nav-count" id="nav-inbox-count"></span></a>
+      <a href="#flats" data-view-link="flats"><svg class="icon" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>Flats</a>
+      <a href="#case" data-view-link="case"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Case<span class="nav-sub" id="nav-case-flat"></span></a>
+    </nav>
+    <p class="nav-label">Partners</p>
+    <nav class="side-nav">
+      <a href="#partner" data-view-link="partner"><svg class="icon" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>Energy partner<span class="nav-count green" id="nav-partner-count"></span></a>
     </nav>
     <div class="side-card">
       <strong>Demo controls</strong>
-      <span>Move the date to open renewal offers, or start over.</span>
       <div id="clock-slot"></div>
       <button class="button button-primary" type="button" data-run="now">Run today’s check</button>
       <button class="button" id="demo-reset" type="button">Reset demo</button>
@@ -33,9 +34,9 @@
 
   <div class="dash-main">
     <header class="dash-top">
-      <div>
-        <h1 class="dash-hello">Good to see you, property team</h1>
-        <p class="muted small">Centrix checks each flat for renewals. Follow tenant decisions, complaint calls and supplier replies.</p>
+      <div class="dash-title">
+        <h1 class="dash-hello" id="view-title">Overview</h1>
+        <p class="muted small" id="view-sub">What needs you today, and what Mia and centrix already handled.</p>
       </div>
       <div class="topbar-right"><div class="phone-menu"><button class="chip-btn primary" type="button" id="phone-btn" aria-expanded="false" aria-controls="phone-pop">📱 Phone</button>
         <div class="phone-pop" id="phone-pop" hidden>
@@ -47,97 +48,135 @@
         </div></div><span class="live-pill" id="live-pill"><span class="live-dot"></span>Live</span><div class="avatar" role="img" aria-label="Signed-in user">RX</div></div>
     </header>
 
+    <!-- ============ OVERVIEW ============ -->
+    <section class="view-pane" data-pane="overview" id="overview" aria-label="Overview">
+      <div id="kpis" class="kpis"></div>
+      <div class="ov-grid">
+        <section class="panel panel-inbox" id="inbox" aria-labelledby="inbox-title">
+          <div class="panel-head"><h2 id="inbox-title">Needs you</h2><span class="muted small" id="inbox-sub"></span></div>
+          <div id="inbox-list" class="inbox-list scroll"></div>
+        </section>
+        <div class="ov-mid">
+          <section class="panel" aria-labelledby="pipe-title">
+            <div class="panel-head"><h2 id="pipe-title">Renewal pipeline</h2><span class="muted small">this cycle</span></div>
+            <div id="pipeline" class="pipeline"></div>
+          </section>
+          <section class="panel" aria-labelledby="calls-title">
+            <div class="panel-head"><h2 id="calls-title">Mia’s calls</h2><span class="muted small" id="calls-sub"></span></div>
+            <div id="calls-card" class="calls-card"></div>
+          </section>
+          <section class="panel" aria-labelledby="soon-title">
+            <div class="panel-head"><h2 id="soon-title">Expiring next</h2><a class="text-button small" href="#flats" data-view-link="flats">All flats →</a></div>
+            <div id="soon" class="soon"></div>
+          </section>
+        </div>
+        <section class="panel panel-feed" aria-labelledby="feed-title">
+          <div class="panel-head"><h2 id="feed-title">Live activity</h2><span class="muted small">residents · Mia · supplier</span></div>
+          <ol id="feed" class="feed scroll"></ol>
+        </section>
+      </div>
+    </section>
 
-    <section class="kpi-row" id="overview" aria-label="Key figures"><div id="kpis" class="kpis"></div></section>
-
-    <div class="dash-cols">
-     <div class="col-main">
-      <section class="panel panel-inbox" id="inbox" aria-labelledby="inbox-title">
-        <div class="panel-head"><h2 id="inbox-title">Needs you</h2><span class="muted small" id="inbox-sub"></span></div>
-        <div id="inbox-list" class="inbox-list"></div>
-      </section>
-
-      <section class="panel panel-flats" aria-label="Flats">
-        <a id="flats"></a>
+    <!-- ============ FLATS ============ -->
+    <section class="view-pane" data-pane="flats" id="flats" aria-label="Flats" hidden>
+      <section class="panel panel-flats">
         <div id="portfolio" class="portfolio" aria-live="polite"></div>
       </section>
-     </div>
-     <div class="col-side">
-      <section class="panel panel-feed" aria-labelledby="feed-title">
-        <div class="panel-head"><h2 id="feed-title">Live activity</h2><span class="muted small">residents, Mia, supplier</span></div>
-        <ol id="feed" class="feed"></ol>
-      </section>
-      <section class="panel panel-network" aria-labelledby="network-title">
-        <div class="panel-head"><h2 id="network-title">Connection flow</h2><span class="muted small" id="network-sub">Flat —</span></div>
-        <div id="network" class="network"></div>
-      </section>
+    </section>
 
-      <section class="panel panel-case view active" id="landlord-view" aria-labelledby="landlord-title">
-        <a id="case"></a>
-        <div class="panel-head"><h2 id="landlord-title">Flat —</h2><span class="muted small" id="landlord-renewal-status">Resident decides</span></div>
-        <p class="muted small" id="landlord-property">—</p>
-        <ul class="status-list">
-          <li><span class="dot dot-amber"></span><div><strong>Contract renewal</strong><span class="muted small"><span id="landlord-expiry">—</span> · <span id="landlord-days"></span></span></div></li>
-          <li><span class="dot"></span><div><strong>Meter reading</strong><span class="muted small" id="landlord-reading-summary"></span></div><span class="badge badge-soft" id="landlord-reading-status">Not entered</span></li>
-          <li><span class="dot dot-green"></span><div><strong id="landlord-tenant">—</strong><span class="muted small" id="landlord-tenant-meta"></span></div><span class="muted small">Tenancy active</span></li>
-        </ul>
-        <div class="section-label timeline-label"><span>What happened</span><span class="count-label" id="case-count">No activity yet</span></div>
-        <ol class="timeline" id="case-timeline"></ol>
-        <div id="staff-issues"></div>
-        <details class="fold">
-          <summary><span>Consent log</span><span class="count-label" id="consent-count">0 entries</span></summary>
-          <div id="consent-log"></div>
-        </details>
-        <details class="fold">
-          <summary><span>Energy contracts on file</span><span class="count-label" id="contract-count">—</span></summary>
-          <div id="contract-list"></div>
-        </details>
-        <details class="fold">
-          <summary><span>Current supply</span><span class="muted small" id="landlord-provider">—</span></summary>
-          <p class="muted small" id="landlord-price"></p>
-          <p class="muted small" id="landlord-property-meta"></p>
-        </details>
-        <details class="fold">
-          <summary><span>Offers sent to resident</span><span class="count-label" id="landlord-offer-count">0 offers</span></summary>
-          <div class="offer-list" id="landlord-offers"></div>
-        </details>
-        <details class="fold">
-          <summary><span>Property record</span></summary>
-          <div class="detail-list" id="property-details"></div>
-        </details>
-        <details class="fold" open>
-          <summary><span>Record quality</span><span class="count-label" id="data-quality-count">—</span></summary>
-          <div class="quality-list" id="data-quality"></div>
-        </details>
-        <p class="notice">Resident consent is required before personal data is shared or an order is placed.</p>
-      </section>
+    <!-- ============ CASE ============ -->
+    <section class="view-pane" data-pane="case" id="case" aria-label="Case" hidden>
+      <div class="case-grid">
+        <section class="panel panel-case view active" id="landlord-view" aria-labelledby="landlord-title">
+          <div class="panel-head"><h2 id="landlord-title">Flat —</h2><span class="status-chip" id="landlord-renewal-status">Resident decides</span></div>
+          <p class="muted small" id="landlord-property">—</p>
+          <ul class="status-list compact">
+            <li><span class="dot dot-amber"></span><div><strong>Contract renewal</strong><span class="muted small"><span id="landlord-expiry">—</span> · <span id="landlord-days"></span></span></div></li>
+            <li><span class="dot"></span><div><strong>Meter reading</strong><span class="muted small" id="landlord-reading-summary"></span></div><span class="badge badge-soft" id="landlord-reading-status">Not entered</span></li>
+            <li><span class="dot dot-green"></span><div><strong id="landlord-tenant">—</strong><span class="muted small" id="landlord-tenant-meta"></span></div><span class="muted small">Tenancy active</span></li>
+          </ul>
+          <div class="network-wrap">
+            <div class="section-label"><span>Connection flow</span><span class="count-label" id="network-sub">Flat —</span></div>
+            <div id="network" class="network"></div>
+          </div>
+          <div class="case-actions" id="case-actions"></div>
+        </section>
 
-     </div>
-    </div>
+        <section class="panel case-tabs-panel" aria-label="Case details">
+          <div class="tabs" role="tablist" id="case-tabs">
+            <button role="tab" type="button" data-tab="activity" aria-selected="true">Activity <span class="tab-count" id="case-count"></span></button>
+            <button role="tab" type="button" data-tab="complaints">Complaints <span class="tab-count" id="complaint-count"></span></button>
+            <button role="tab" type="button" data-tab="contracts">Contracts &amp; offers</button>
+            <button role="tab" type="button" data-tab="record">Record <span class="tab-count" id="data-quality-count"></span></button>
+          </div>
+          <div class="tab-body scroll">
+            <div class="tab-pane" data-tabpane="activity">
+              <div id="resident-said-slot"></div>
+              <div class="section-label timeline-label"><span>What happened</span><button type="button" class="text-button small" id="tl-toggle" hidden></button></div>
+              <ol class="timeline" id="case-timeline"></ol>
+            </div>
+            <div class="tab-pane" data-tabpane="complaints" hidden>
+              <div id="staff-issues"></div>
+              <p class="muted small empty" id="no-complaints">No complaints for this flat.</p>
+            </div>
+            <div class="tab-pane" data-tabpane="contracts" hidden>
+              <div class="mini-cards">
+                <div class="mini-card"><span class="muted small">Current supply</span><strong id="landlord-provider">—</strong><span class="muted small" id="landlord-price"></span></div>
+                <div class="mini-card"><span class="muted small">Offers to resident</span><strong id="landlord-offer-count">0 offers</strong><span class="muted small" id="landlord-property-meta"></span></div>
+              </div>
+              <div class="section-label"><span>Energy contracts on file</span><span class="count-label" id="contract-count">—</span></div>
+              <div id="contract-list"></div>
+              <div class="section-label"><span>Offers sent to resident</span></div>
+              <div class="offer-list" id="landlord-offers"></div>
+            </div>
+            <div class="tab-pane" data-tabpane="record" hidden>
+              <div class="section-label"><span>Record quality</span></div>
+              <div class="quality-list" id="data-quality"></div>
+              <div class="section-label"><span>Property record</span></div>
+              <div class="detail-list" id="property-details"></div>
+              <div class="section-label"><span>Consent log</span><span class="count-label" id="consent-count">0 entries</span></div>
+              <div id="consent-log"></div>
+              <p class="notice">Resident consent is required before personal data is shared or an order is placed.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
 
-      <section class="panel panel-partner view active staff-partner" id="company-view" aria-labelledby="company-title">
-        <a id="partner"></a>
-        <div class="panel-head"><h2 id="company-title">New order</h2><span class="muted small" id="order-id-label"></span></div>
-        <p class="muted small" id="partner-lead">Hi <strong id="partner-name">Energy partner</strong>. A customer picked one of your plans.</p>
-        <div id="order-card"></div>
-        <div class="call-script" id="call-script"></div>
-        <div class="answer-row" id="partner-actions"></div>
-        <div id="partner-issues"></div>
-        <div class="section-label timeline-label"><span>History</span></div>
-        <ol class="timeline" id="job-timeline"></ol>
-        <details class="fold">
-          <summary><span>Your plans</span><span class="muted small">prices customers see</span></summary>
-          <form id="offers-form" class="feed-form">
-            <div class="plan-table" id="plan-rows"></div>
-            <button class="text-button add-plan" id="add-plan" type="button">+ Add a plan</button>
-            <textarea id="offers-input" hidden></textarea>
-            <div class="company-actions"><span class="form-message" id="offers-message" role="status"></span><button class="button button-primary" type="submit">Save plans</button></div>
-          </form>
-        </details>
-        <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
-      </section>
-    
-    <footer class="app-footer">Reltix · local demo · sample data</footer>
+    <!-- ============ ENERGY PARTNER ============ -->
+    <section class="view-pane" data-pane="partner" id="partner" aria-label="Energy partner" hidden>
+      <div id="partner-stats" class="partner-stats"></div>
+      <div class="partner-grid">
+        <section class="panel" aria-labelledby="board-title">
+          <div class="panel-head"><h2 id="board-title">Orders</h2><span class="muted small" id="board-sub"></span></div>
+          <div id="order-board" class="order-board"></div>
+        </section>
+        <section class="panel panel-partner view active staff-partner" id="company-view" aria-labelledby="company-title">
+          <div class="panel-head"><h2 id="company-title">New order</h2><span class="muted small" id="order-id-label"></span></div>
+          <div class="scroll partner-detail">
+            <p class="muted small" id="partner-lead">Hi <strong id="partner-name">Energy partner</strong>. A customer picked one of your plans.</p>
+            <div id="order-card"></div>
+            <div class="call-script" id="call-script"></div>
+            <div class="answer-row" id="partner-actions"></div>
+            <div id="partner-issues"></div>
+            <div class="section-label timeline-label"><span>History</span></div>
+            <ol class="timeline" id="job-timeline"></ol>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="plans-title">
+          <div class="panel-head"><h2 id="plans-title">Your plans</h2><span class="muted small">prices residents see</span></div>
+          <div class="scroll plans-wrap">
+            <div><div id="plan-chart" class="plan-chart"></div><p class="fine-print">Bar = monthly price · green line = renewable share. Partner answers go back to centrix as status updates (connector spec §6).</p></div>
+            <form id="offers-form" class="feed-form">
+              <div class="plan-table" id="plan-rows"></div>
+              <button class="text-button add-plan" id="add-plan" type="button">+ Add a plan</button>
+              <textarea id="offers-input" hidden></textarea>
+              <div class="company-actions"><span class="form-message" id="offers-message" role="status"></span><button class="button button-primary" type="submit">Save plans</button></div>
+            </form>
+          </div>
+        </section>
+      </div>
+    </section>
   </div>
 </body>
 </html>

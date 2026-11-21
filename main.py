@@ -359,7 +359,7 @@ def portfolio_review_queue() -> list[dict]:
                 pending.append(review_item(unit_id, "order", f"{order['order_id']}:start_unconfirmed", "Confirm whether supply started",
                                            "The supplier has not confirmed that supply began; property team follow-up is due."))
         for issue in unit.get("issues", []):
-            if issue.get("reply") or issue.get("owner") == "partner" or issue.get("shared_order_id"):
+            if issue.get("reply") or issue.get("owner") == "partner" or issue.get("shared_order_id") or issue.get("resolved"):
                 continue
             urgent = issue.get("urgent")
             item = review_item(unit_id, "issue", issue["issue_id"],
@@ -500,6 +500,50 @@ def offers_summary(partner: dict, current_price: float) -> str:
     return "; ".join(parts) or "no offers available"
 
 
+def customer_status(unit: dict) -> str:
+    """Plain-text memory for Mia: what this resident chose, ordered, reported and asked for, so she can answer
+    "what plan did I pick?" or "the leak is fixed now" on any later call."""
+    unit_id = unit.get("unit_id", "")
+    case = unit.get("renewal_case") or {}
+    offers = {o["offer_id"]: o for o in read_partner().get("offers", [])}
+    lines = []
+    orders = [o for o in read_orders() if o.get("subject", {}).get("unit_id") == unit_id]
+    order = orders[-1] if orders else None
+    if order:
+        product = (order.get("offer") or {}).get("product") or offers.get(order.get("offer_id"), {}).get("product", order.get("offer_id"))
+        lines.append(f"Signed in the portal: {product}. Supplier order {order['order_id']} is {order['status'].replace('_', ' ')}"
+                     + (f" (start {order['requested_start']})" if order.get("requested_start") else "") + ".")
+    elif case.get("chosen_offer_id"):
+        o = offers.get(case["chosen_offer_id"], {})
+        lines.append(f"Chose {o.get('product', case['chosen_offer_id'])} (about {o.get('estimated_monthly_price_eur', '?')} EUR a month) "
+                     f"but has NOT confirmed or signed yet; the confirm link is in the portal.")
+    else:
+        lines.append("Has not chosen a new plan yet.")
+    if case.get("declined"):
+        lines.append(f"Said no to switching ({case.get('declined_reason') or 'no reason given'}).")
+    if case.get("preferred_channel"):
+        lines.append(f"Prefers contact by {case['preferred_channel']}.")
+    if case.get("callback"):
+        lines.append(f"Asked to be called back {case['callback']}.")
+    reading = next((m for m in unit.get("unit", {}).get("meters", []) if m.get("type") == "electricity"), {}).get("switch_reading")
+    if isinstance(reading, dict) and reading.get("value_kwh"):
+        lines.append(f"Meter reading for the switch saved: {reading['value_kwh']} kWh.")
+    open_issues = [i for i in unit.get("issues", []) if not i.get("resolved")]
+    for i in open_issues[-4:]:
+        reply = i.get("reply")
+        state = f"the property team replied: {reply}" if isinstance(reply, str) and reply else \
+            "shared with the supplier" if i.get("shared_order_id") else "waiting for the property team"
+        lines.append(f"Open complaint {i['issue_id']}{' (URGENT)' if i.get('urgent') else ''}, reported {i.get('reported_at', '')[:10]}: "
+                     f"{i.get('text', '')} Status: {state}.")
+    for i in [i for i in unit.get("issues", []) if i.get("resolved")][-2:]:
+        lines.append(f"Fixed complaint {i['issue_id']}: {i.get('text', '')[:80]} (resident confirmed it's fixed).")
+    for n in (case.get("notes") or [])[-3:]:
+        lines.append(f"Note: {n.get('text', '')}")
+    if not open_issues:
+        lines.append("No open complaints.")
+    return " ".join(lines)
+
+
 def agent_variables(unit: dict) -> dict:
     energy = next((c for c in unit.get("contracts", []) if c.get("type") == "energy_supply" and c.get("status") == "active"), {})
     name = (unit.get("tenant") or {}).get("name", "")
@@ -522,6 +566,7 @@ def agent_variables(unit: dict) -> dict:
         "offers_summary": offers_summary(partner, price),
         "call_reason": "renewal",
         "language": (unit.get("tenant") or {}).get("language", "en"),
+        "customer_status": customer_status(unit) if unit.get("tenant") else "Vacant flat.",
         "first_message": greeting or (f"Hi {name.split(' ')[0]}, this is Mia, the digital assistant from reltix, your property manager. "
                           f"I'm calling because your electricity contract with {energy.get('supplier', 'your supplier')} ends on "
                           f"{expiry.day} {expiry.strftime('%B')}. Do you have two minutes?") if expiry else
@@ -1212,8 +1257,8 @@ class DemoHandler(BaseHTTPRequestHandler):
                     saving += prev - new
             issues = [i for uid in all_unit_ids() for i in read_json(unit_path(uid)).get("issues", [])]
             kpis = {"signed": len(signed), "active": sum(o.get("status") == "active" for o in orders),
-                    "monthly_saving_eur": round(saving, 2), "issues_open": sum(not i.get("reply") for i in issues),
-                    "issues_urgent": sum(bool(i.get("urgent")) and not i.get("reply") for i in issues),
+                    "monthly_saving_eur": round(saving, 2), "issues_open": sum(not i.get("reply") and not i.get("resolved") for i in issues),
+                    "issues_urgent": sum(bool(i.get("urgent")) and not i.get("reply") and not i.get("resolved") for i in issues),
                     "support_calls": len(issues) + sum(s.get("channel") == "phone" for o in orders for s in o["status_history"])
                                      + sum(bool(i.get("reply") and i.get("shared_order_id")) for i in issues)}
             names = {}
@@ -1222,7 +1267,7 @@ class DemoHandler(BaseHTTPRequestHandler):
                 u = read_json(unit_path(uid))
                 names[uid] = (u.get("tenant") or {}).get("name") or "Vacant"
                 for i in u.get("issues", []):
-                    if not i.get("reply") and not i.get("handled"):
+                    if not i.get("reply") and not i.get("handled") and not i.get("resolved"):
                         inbox.append({"kind": "issue", "unit_id": uid, "tenant": names[uid], "urgent": bool(i.get("urgent")),
                                       "issue_id": i.get("issue_id"), "text": i.get("text"), "at": i.get("reported_at")})
                 need = (u.get("renewal_case") or {}).get("needs_person")
@@ -1238,7 +1283,28 @@ class DemoHandler(BaseHTTPRequestHandler):
             feed = [{**e, "tenant": names.get(e.get("unit_id"), "")} for e in read_events()
                     if e.get("channel") != "centrix"][-20:]
             nxt = next_event_date(demo_today())
-            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "calls": read_list(CALLS_FILE, "calls"), "mia_calls": read_list(mia_calls_file(), "calls"), "kpis": kpis,
+            # Partner board + renewal pipeline (staff dashboard)
+            board = []
+            for o in orders:
+                hist = o.get("status_history") or []
+                ouid = (o.get("subject") or {}).get("unit_id")
+                board.append({"order_id": o["order_id"], "unit_id": ouid, "tenant": names.get(ouid, ""),
+                              "product": o.get("product"), "partner": o.get("partner"), "status": o.get("status"),
+                              "requested_start": o.get("requested_start"), "price": o.get("estimated_monthly_price_eur"),
+                              "previous_price": (o.get("previous_contract") or {}).get("monthly_price_eur"),
+                              "updated_at": hist[-1]["at"] if hist else None, "start_date_mismatch": bool(o.get("start_date_mismatch"))})
+            results = (run or {}).get("results", [])
+            mia = read_list(mia_calls_file(), "calls")
+            chosen = 0
+            for uid in all_unit_ids():
+                case = read_json(unit_path(uid)).get("renewal_case") or {}
+                chosen += bool(case.get("chosen_offer_id"))
+            pipeline = {"due": sum(r["decision"] != "skipped" for r in results),
+                        "called": len({c["unit_id"] for c in mia if c.get("status") in ("answered", "done")}),
+                        "chosen": max(chosen, len({(o.get("subject") or {}).get("unit_id") for o in orders})),
+                        "signed": len({(o.get("subject") or {}).get("unit_id") for o in signed}),
+                        "active": len({(o.get("subject") or {}).get("unit_id") for o in orders if o.get("status") == "active"})}
+            self.send_json(200, {"today": demo_today().isoformat(), "run": run, "orders": board, "pipeline": pipeline, "calls": read_list(CALLS_FILE, "calls"), "mia_calls": read_list(mia_calls_file(), "calls"), "kpis": kpis,
                                  "inbox": inbox, "feed": feed, "next_event": nxt.isoformat() if nxt else None,
                                  "supplier_followups": [c for c in read_list(CALLS_FILE, "calls")
                                                         if c.get("kind") == "supplier_follow_up" and c.get("status") != "done"],
@@ -1687,6 +1753,12 @@ class DemoHandler(BaseHTTPRequestHandler):
                 issue["client_event_ids"] = [event_key]
             issues.append(issue)
             add_event("issue", f"Problem reported: {text}" + (" (urgent)" if issue["urgent"] else ""), source, unit_id)
+        elif body.get("resolved"):
+            # The resident tells Mia (or the portal) that the problem is fixed.
+            note = str(body.get("note", "")).strip()[:200]
+            issue["resolved"] = {"at": now_iso(), "by": "resident", "note": note, "source": source}
+            issue["status"] = "resolved"
+            add_event("issue_resolved", f"Resident says it's fixed: {issue['text'][:80]}" + (f" ({note})" if note else ""), source, unit_id)
         elif not duplicate_event:
             if body.get("text"):
                 issue["text"] = f"{issue['text']} {str(body['text']).strip()}"[:600]
