@@ -17,12 +17,50 @@ const call = {
   transcript: [],        // { who: "Mia" | "You", text }
   issueId: null,
   sessionId: null,
-  eventNumber: 0,
-  pendingEvent: null,
-  recovery: null,
 };
 const resident = { declined: false, consent: false, busy: false, error: "", submissionId: null, selectedVersion: null };
-const complaintFormAttempt = { sessionId: null, eventId: null, text: null };
+let recovery = null;
+let simulatedComplaint = { sessionId: null, eventId: null, text: null };
+
+function setupStaffNavigation() {
+  const overview = document.getElementById("staff-overview");
+  const partner = document.getElementById("company-view");
+  const nav = document.querySelector(".side-nav");
+  if (!overview || !partner || !nav) return;
+
+  const links = [...nav.querySelectorAll('a[href^="#"]')];
+  const activate = () => {
+    const allowed = ["#overview", "#flats", "#case", "#partner"];
+    const section = allowed.includes(location.hash) ? location.hash : "#overview";
+    const partnerOpen = section === "#partner";
+    overview.classList.toggle("active", !partnerOpen);
+    partner.classList.toggle("active", partnerOpen);
+    links.forEach(link => {
+      const active = link.hash === section;
+      link.classList.toggle("active", active);
+      if (active) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    return section;
+  };
+  const reflectLocation = () => {
+    const section = activate();
+    if (section === "#partner") window.scrollTo({ top: 0 });
+  };
+
+  nav.addEventListener("click", event => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link || !links.includes(link)) return;
+    event.preventDefault();
+    if (location.hash !== link.hash) history.pushState(null, "", link.hash);
+    const section = activate();
+    if (section === "#partner") window.scrollTo({ top: 0, behavior: "smooth" });
+    else document.getElementById(section.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  window.addEventListener("popstate", reflectLocation);
+  window.addEventListener("hashchange", reflectLocation);
+  reflectLocation();
+}
 
 /* ---------- small helpers ---------- */
 
@@ -34,7 +72,6 @@ const post = async (path, body) => {
 };
 const logEvent = (type, text, channel = "voice") => post("/api/events", { type, text, channel, unit_id: UNIT }).catch(() => {});
 const idleish = () => call.status === "idle" || call.status === "ended";
-const newComplaintId = () => globalThis.crypto?.randomUUID?.() || `complaint-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 // Everything the resident tells Mia or the portal is stored once on the flat (main.py update_case), so all pages show it.
 const saveCase = (patch, source = "voice") => post("/api/case", { unit_id: UNIT, source, ...patch }).then(() => refreshState()).catch(() => {});
 const serverCase = () => state.case || {};
@@ -53,44 +90,14 @@ const clientTools = {
 
 // Problem reports (resident calls Mia): one ticket per call, later details and "urgent" update the same ticket.
 async function reportIssue({ text = "", urgent = false, reason = "" }) {
-  call.sessionId ||= newComplaintId();
-  const normalized = JSON.stringify([text, urgent, reason]);
-  if (!call.pendingEvent || call.pendingEvent.payload !== normalized) {
-    call.pendingEvent = { payload: normalized, id: `${call.sessionId}-${++call.eventNumber}` };
-  }
   try {
+    call.sessionId ||= crypto.randomUUID();
     const { issue } = await post("/api/issues", { unit_id: UNIT, source: "voice", issue_id: call.issueId, text, urgent, reason,
-      call_session_id: call.sessionId, client_event_id: call.pendingEvent.id });
+      call_session_id: call.sessionId, client_event_id: text ? crypto.randomUUID() : "" });
     call.issueId = issue.issue_id;
-    call.pendingEvent = null;
     refreshState();
     return issue.urgent ? "Sent to the property team as urgent. A person will contact them soon." : "Problem sent to the property team.";
   } catch (error) { return `Couldn't save it: ${error.message}`; }
-}
-
-async function recoverDroppedCall() {
-  try { await refreshState(); } catch (_) { /* Preserve the unfinished report path when the API is unavailable. */ }
-  const saved = (state.issues || []).find((issue) => issue.call_session_id === call.sessionId);
-  if (saved) {
-    call.issueId = saved.issue_id;
-    call.recovery = { state: "saved", issue: saved };
-  } else {
-    const draft = call.transcript.filter((line) => line.who === "You").map((line) => line.text).join(" ").slice(0, 300);
-    const eventId = call.pendingEvent?.id || `${call.sessionId}-finish`;
-    call.recovery = { state: "unfinished", draft, sessionId: call.sessionId, eventId };
-  }
-  renderComplaintRecovery();
-}
-
-function complaintFormIds(text) {
-  if (!complaintFormAttempt.sessionId) {
-    complaintFormAttempt.sessionId = newComplaintId();
-  }
-  if (complaintFormAttempt.text !== text) {
-    complaintFormAttempt.eventId = `${complaintFormAttempt.sessionId}-${newComplaintId()}`;
-    complaintFormAttempt.text = text;
-  }
-  return { sessionId: complaintFormAttempt.sessionId, eventId: complaintFormAttempt.eventId };
 }
 
 async function startCall() {
@@ -98,8 +105,7 @@ async function startCall() {
     call.error = "Voice calling is unavailable right now. Please try again later.";
     return render();
   }
-  Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: newComplaintId(),
-    eventNumber: 0, pendingEvent: null, recovery: null });
+  Object.assign(call, { status: "connecting", transcript: [], error: "", issueId: null, sessionId: crypto.randomUUID() });
   render();
   const vars = { ...state.agent_variables, call_reason: "problem_report",
     first_message: `Hi ${firstName()}, this is Mia. What happened, and where?` };
@@ -117,7 +123,6 @@ async function startCall() {
       onDisconnect: () => {
         call.status = "ended"; call.conversation = null;
         render();
-        recoverDroppedCall();
       },
       onModeChange: ({ mode }) => { call.mode = mode; renderCall(); },
       onMessage: ({ source, role, message }) => {
@@ -162,20 +167,6 @@ function renderCall() {
     ${lines ? `<div class="call-script">${lines}</div>` : ""}
     ${call.error ? `<p class="form-message error">${esc(call.error)}</p>` : ""}`;
   renderPhone();
-}
-
-function renderComplaintRecovery() {
-  const box = document.getElementById("complaint-recovery");
-  if (!box) return;
-  if (!call.recovery) { box.innerHTML = ""; return; }
-  if (call.recovery.state === "saved") {
-    const issue = call.recovery.issue;
-    box.innerHTML = `<div class="reading-summary" role="status"><strong>Saved complaint ${esc(issue.issue_id)}</strong><p>${esc(issue.text)}</p><span>Sent to the ${issue.owner === "partner" ? "supplier" : "property team"}.</span></div>`;
-    return;
-  }
-  box.innerHTML = `<form id="finish-dropped-call" class="feed-form"><p class="form-message" role="status">Your complaint call ended before we found a saved report. Your report is unfinished. Review it and finish it here.</p>
-    <label>Finish your report<textarea name="text" rows="3" maxlength="300" required>${esc(call.recovery.draft)}</textarea></label>
-    <button class="button button-primary" type="submit">Finish report</button></form>`;
 }
 
 /* Full-screen phone call: looks and behaves like a normal incoming call (answer / decline, timer, mute, hang up). */
@@ -237,23 +228,42 @@ function renderIssues() {
     if (!box) continue;
     const items = (state.issues || []).filter(i => audience !== "partner" || i.shared_order_id).slice().reverse();
     const html = items.map(i => {
-      const assignee = i.owner === "partner" || i.shared_order_id ? "partner" : "reltix";
-      const to = assignee === "partner" ? "supplier" : "property team";
+      const assignee = i.shared_order_id ? "partner" : "reltix";
+      const to = i.shared_order_id ? "supplier" : "property team";
       const reply = i.reply ? `<p><strong>Reply from ${to}</strong> · ${esc(i.reply)}</p>` : "";
-      const handoff = !i.reply && i.ownership_reason ? `<p class="muted small">The supplier order ended. The ${esc(to)} will reply. ${esc(i.ownership_reason)}</p>` :
-        !i.reply ? `<p class="muted small">This complaint is with the ${esc(to)}.</p>` : "";
       const form = !i.reply && assignee === audience ? `<form class="feed-form" data-issue="${esc(i.issue_id)}" data-unit="${esc(UNIT)}" data-assignee="${audience}">
         <label>${assignee === "partner" ? "Your simulated phone reply" : "Reply to tenant"}<textarea name="reply" rows="2" maxlength="500" required></textarea></label>
         <button class="button" type="submit">Send reply</button><span role="status" class="form-message"></span></form>` : "";
       const share = !i.reply && audience === "tenant" && shareable && !i.shared_order_id ?
         `<button class="text-button" type="button" data-share-issue="${esc(i.issue_id)}">Share with ${esc(order.partner)} and request a call</button>` : "";
       return `<details class="fold"><summary>${i.urgent ? "Urgent complaint" : "Complaint"} · ${i.reply ? "Reply received" : "Awaiting " + to}</summary>
-        <p>${esc(i.text)}</p>${handoff}${reply}${share}${form}</details>`;
+        <p>${esc(i.text)}</p>${reply}${share}${form}</details>`;
     }).join("");
     if (box.dataset.html !== html && (!box.contains(document.activeElement) || box.dataset.unit !== UNIT)) {
       box.dataset.html = html; box.dataset.unit = UNIT; box.innerHTML = html;
     }
   }
+}
+
+function ensureSimulationIds(text) {
+  if (simulatedComplaint.text !== text) {
+    simulatedComplaint = { text, sessionId: crypto.randomUUID(), eventId: crypto.randomUUID() };
+  }
+  return simulatedComplaint;
+}
+
+function renderComplaintRecovery() {
+  const box = document.getElementById("complaint-recovery");
+  if (!box) return;
+  if (!recovery) { box.innerHTML = ""; return; }
+  const order = latestOrder();
+  const shareable = order && !["rejected", "cancelled"].includes(order.status);
+  box.innerHTML = `<div class="notice ${recovery.saved ? "" : "notice-amber"}">
+    <strong>${recovery.saved ? "Your report was saved." : "The call disconnected before saving."}</strong>
+    <p>${esc(recovery.text)}</p>
+    ${!recovery.saved ? `<label class="consent"><input type="checkbox" id="recovery-share" ${shareable ? "" : "disabled"}><span>Share this report with my energy supplier and ask for a reply.</span></label>
+      <button class="button button-primary" type="button" data-recovery-submit>Review and submit note</button>` : `<p class="small">See your report below. Retrying will not create another ticket.</p><button class="text-button" type="button" data-recovery-retry>Retry save</button>`}
+  </div>`;
 }
 
 function renderDecision() {
@@ -325,9 +335,8 @@ async function sign() {
   resident.submissionId ||= crypto.randomUUID();
   resident.busy = true; resident.error = ""; render();
   try {
-    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, meter_id: window.selectedMeterId?.(),
-      offer_version: offer.offer_version, submission_id: resident.submissionId,
-      consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
+    await post("/api/orders", { unit_id: UNIT, offer_id: offer.offer_id, offer_version: offer.offer_version,
+      submission_id: resident.submissionId, consent_given: true, channel: "portal", signed_name: state.unit.tenant.name });
     resident.consent = false;
     resident.submissionId = null;
   } catch (error) {
@@ -349,11 +358,7 @@ function chooseOffer(id, version) {
   resident.error = "";
   resident.selectedVersion = version;
   renderDecision();
-  if (id) post("/api/case", { unit_id: UNIT, chosen_offer_id: id, offer_version: version, source: "portal" }).then(refreshState).catch((error) => {
-    resident.consent = false;
-    resident.error = error.message;
-    renderDecision();
-  });
+  if (id) post("/api/case", { unit_id: UNIT, chosen_offer_id: id, source: "portal" }).then(refreshState).catch(() => {});
 }
 
 function syncOfferVersion() {
@@ -372,12 +377,8 @@ function syncOfferVersion() {
 
 const CALL_LINES = {
   submitted: (o) => [`Hello, this is the Reltix assistant with a new order.`, `${o.subject.tenant.name} at ${o.subject.address} would like your ${o.product} plan at ${money(o.estimated_monthly_price_eur)} a month, starting ${prettyDate(o.requested_start)}.`, `Can you take this order?`],
-  received: () => [`Is the start date confirmed, or do you need a reading?`, `If you need the switch reading, ask for it before its due date.`],
-  needs_input: (o) => {
-    const boundary = new Date(`${o.requested_start}T00:00:00Z`);
-    boundary.setUTCDate(boundary.getUTCDate() - 1);
-    return [`I’ve asked the customer to provide the switch reading before ${prettyDate(boundary.toISOString().slice(0, 10))}. I’ll call you back as soon as I have it.`];
-  },
+  received: () => [`Is the start date confirmed, or do you need a reading?`, `Confirming advances this flat’s demo to the final reading date.`],
+  needs_input: () => [`I’ve asked the customer for the meter reading. I’ll call you back as soon as I have it.`],
   confirmed: (o) => [`Great, I’ve told the customer it starts on ${prettyDate(o.requested_start)}.`, `I’ll check in on the start day to confirm the power is running.`],
   active: () => [`All done. The contract is filed with the property. Thank you!`],
   rejected: () => [`Understood. I’ll offer the customer another plan. Thank you.`],
@@ -417,7 +418,7 @@ function renderPartner() {
     ["Address", order.subject.address],
     ["Plan", `${order.product} · ${money(order.estimated_monthly_price_eur)}/month`],
     ["Start", prettyDate(order.requested_start)],
-    ["Meter", `${order.subject.meter.number || "number needed"} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : `reading on ${prettyDate(order.requested_start)}`}`],
+    ["Meter", `${order.subject.meter.number || "number needed"} · ${reading != null ? `${Number(reading).toLocaleString("en-GB")} kWh` : "reading on the switch date"}`],
     ["Old contract", `${order.previous_contract.supplier}, ends ${prettyDate(order.previous_contract.ends)} · you cancel it`],
     ["Consent", `${order.consent.channel} · ${new Date(order.consent.given_at).toLocaleString("en-GB")}`],
   ];
@@ -451,12 +452,8 @@ function renderPartner() {
 
 async function partnerAnswer(status) {
   const order = latestOrder();
-  const boundary = new Date(`${order.requested_start}T00:00:00Z`);
-  boundary.setUTCDate(boundary.getUTCDate() - 1);
-  const note = status === "needs_input" ? `Please send the switch reading before ${boundary.toISOString().slice(0, 10)}.`
-    : status === "rejected" ? order?.start_date_mismatch
-      ? `Cannot honor requested start ${order.start_date_mismatch.requested}; proposed ${order.start_date_mismatch.proposed}`
-      : "not available for this postcode" : "";
+  const note = status === "needs_input" ? "switch reading" : status === "rejected"
+    ? order?.start_date_mismatch ? `Cannot honor requested start ${order.start_date_mismatch.requested}; proposed ${order.start_date_mismatch.proposed}` : "not available for this postcode" : "";
   try {
     const extra = status === "confirmed" ? { start_date: byId("partner-start-date").value,
       supply_started: byId("partner-supply-started").checked } : status === "cancelled" ? { note: "cancelled before activation" } : {};
@@ -503,7 +500,6 @@ function renderNetwork() {
 
 const EVENT_TITLES = {
   detected: "Renewal window detected", call_queued: "Call queued for Mia",
-  staff_review: "Staff review logged",
   call: "Call", choice: "Plan chosen on the call", case: "Resident file updated", reading: "Meter reading", link: "Link sent", declined: "Resident declined",
   callback: "Callback requested", handoff: "Needs a person", consent: "Consent given and signed", order: "Order sent to partner",
   received: "Partner accepted", needs_input: "Partner needs input", confirmed: "Contract confirmed", rejected: "Partner declined",
@@ -560,10 +556,7 @@ function renderManager() {
   const log = state.unit.consent_log || [];
   byId("consent-count").textContent = `${log.length} ${log.length === 1 ? "entry" : "entries"}`;
   byId("consent-log").innerHTML = log.length
-    ? log.map((c) => {
-      const terms = c.offer_snapshot || {};
-      return `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)} · ${esc(c.signed_name || c.given_by || "tenant")} · ${esc(c.order_id)}</span><strong>Shared with ${esc(c.recipient || c.partner)}: ${esc((c.approved_fields || c.data_shared || []).join(", "))}. Approved ${esc(terms.product || "plan")} at ${money(terms.estimated_monthly_price_eur)} / month for ${esc(terms.contract_months)} months.</strong></div>`;
-    }).join("")
+    ? log.map((c) => `<div class="detail-row"><span>${esc(new Date(c.given_at).toLocaleString("en-GB"))} · ${esc(c.channel)} · ${esc(c.order_id)}</span><strong>${esc(c.recipient || c.partner)}: ${esc((c.approved_fields || c.data_shared || []).join(", "))}</strong></div>`).join("")
     : `<p class="muted small">No personal data has been shared with a partner.</p>`;
 
   const energy = (state.unit.contracts || []).filter((c) => c.type === "energy_supply");
@@ -594,7 +587,6 @@ function renderPortfolio() {
   const run = portfolio.run;
   const calls = portfolio.calls || [];
   const followups = portfolio.supplier_followups || [];
-  const reviews = portfolio.review_queue || [];
   const callFor = (uid) => calls.filter((c) => c.unit_id === uid).slice(-1)[0];
   const rows = (run?.results || []).map((r) => {
     const [cls, label] = DECISION[r.decision];
@@ -615,7 +607,7 @@ function renderPortfolio() {
       tile("◎", run.scanned, "Flats checked", `${run.matched} matched the trigger today`),
       tile("☎", k.support_calls || 0, "Phone interactions", "Tenant reports and supplier replies", "cyan"),
       tile("✓", k.signed || 0, "Contracts signed", k.monthly_saving_eur ? `€${Math.round(k.monthly_saving_eur * 12)} saved per year` : `${k.active || 0} running`, "emerald"),
-      tile("!", reviews.length, "Need a person", "Data and workflow exceptions in queue", "amber"),
+      tile("!", (run.attention || 0) + (k.issues_urgent || 0), "Need a person", `${k.issues_open || 0} open complaints`, "amber"),
     ].join("");
     if (kpis.dataset.html !== html) { kpis.dataset.html = html; kpis.innerHTML = html; }
   }
@@ -625,19 +617,6 @@ function renderPortfolio() {
   const html = `
     <div class="panel-head"><h2>Today’s run</h2><span class="muted small">${run ? `${esc(prettyDate(run.date))} · ${new Date(run.ran_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · ${esc(run.source)}` : ""}</span></div>
     <p class="muted small">Matched residents receive a renewal offer in their portal. Phone calls handle complaints and supplier follow-up.</p>
-    <section class="review-queue" aria-label="Property team review queue">
-      <div class="section-label"><span>Needs review</span><span class="count-label">${reviews.length} open</span></div>
-      ${reviews.length ? reviews.map((item) => `<article class="review-item ${item.severity === "urgent" ? "urgent" : ""}">
-        <div class="review-item-head"><div><strong>${esc(item.title)}</strong><span class="muted small">Flat ${esc(item.unit_id.replace("unit_", "").toUpperCase())} · ${esc(item.category.replaceAll("_", " "))}</span></div>
-          <a class="text-button" href="/reltix?unit=${esc(item.unit_id)}">Open case</a></div>
-        <p>${esc(item.reason)}</p><span class="muted small">Source: ${esc(item.source || "Not recorded")}</span>
-        <form class="review-form" data-review="${esc(item.review_id)}" data-unit="${esc(item.unit_id)}">
-          <label class="sr-only" for="review-note-${esc(item.review_id)}">Review note</label>
-          <input id="review-note-${esc(item.review_id)}" name="note" maxlength="300" minlength="5" required placeholder="What did you check or do?">
-          <button class="button" type="submit">Record review</button><span role="status" class="form-message"></span>
-        </form>
-      </article>`).join("") : `<p class="muted small">No open review items. Data checks, coverage and workflow exceptions will appear here.</p>`}
-    </section>
     ${run ? `<div class="run-table-wrap"><table class="run-table"><thead><tr><th>Flat</th><th>Resident</th><th>Decision</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">No run yet.</p>`}
     ${followups.length ? `<details class="fold"><summary>Supplier callbacks · ${followups.length} open</summary>${followups.map((f) => `<div class="detail-row"><span>${esc(f.unit_id.replace("unit_", "").toUpperCase())} · ${esc(prettyDate(f.due_date))} · ${esc(f.owner === "property team" ? "Property team owns overdue callback" : "Supplier callback queued")}</span><strong><a href="/supplier?unit=${esc(f.unit_id)}">Open supplier workflow</a></strong></div>`).join("")}</details>` : ""}
     <p class="phone-hint small muted">Supplier phone replies are simulated in the energy partner view.</p>`;
@@ -679,7 +658,6 @@ function render() {
     if (avatar && name) avatar.textContent = name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   }
   renderCall();
-  renderComplaintRecovery();
   renderIssues();
   renderDecision();
   renderPartner();
@@ -689,7 +667,7 @@ function render() {
 
 document.addEventListener("submit", async event => {
   const form = event.target;
-  if (form.id !== "problem-form" && form.id !== "finish-dropped-call" && !form.dataset.issue && !form.dataset.review) return;
+  if (form.id !== "problem-form" && !form.dataset.issue) return;
   event.preventDefault();
   const button = form.querySelector("button");
   if (button.disabled) return;
@@ -697,26 +675,15 @@ document.addEventListener("submit", async event => {
   const data = new FormData(form);
   const feedback = form.querySelector('[role="status"]') || byId("issue-feedback");
   try {
-    if (form.dataset.review) {
-      const note = String(data.get("note") || "").trim();
-      await post(`/api/reviews/${form.dataset.review}`, { unit_id: form.dataset.unit, note });
-      await loadPortfolio();
-    } else if (form.id === "problem-form") {
-      const text = String(data.get("text") || "").trim();
-      const ids = complaintFormIds(text);
+    if (form.id === "problem-form") {
+      const ids = ensureSimulationIds(String(data.get("text") || "").trim());
       await post("/api/issues", { unit_id: UNIT, text: data.get("text"), source: "simulated phone",
         shared_order_id: data.has("share") ? latestOrder()?.order_id : null,
         call_session_id: ids.sessionId, client_event_id: ids.eventId });
+      recovery = null;
+      simulatedComplaint = { sessionId: null, eventId: null, text: null };
       form.reset(); byId("complaint-demo").open = false;
-      Object.assign(complaintFormAttempt, { sessionId: null, eventId: null, text: null });
       feedback.textContent = "Complaint recorded. The reply will appear here.";
-    } else if (form.id === "finish-dropped-call") {
-      const recovery = call.recovery;
-      const { issue } = await post("/api/issues", { unit_id: UNIT, text: String(data.get("text") || "").trim(), source: "voice recovery",
-        call_session_id: recovery.sessionId, client_event_id: recovery.eventId });
-      call.issueId = issue.issue_id;
-      call.recovery = { state: "saved", issue };
-      renderComplaintRecovery();
     } else {
       await post("/api/issues/reply", { unit_id: form.dataset.unit, issue_id: form.dataset.issue, role: form.dataset.assignee, reply: data.get("reply") });
       form.reset(); button.blur();
@@ -738,22 +705,39 @@ document.addEventListener("click", async (event) => {
   const disconnect = event.target.closest("[data-sim-disconnect]");
   if (disconnect) {
     const form = byId("problem-form");
-    const text = String(form.elements.text.value || "").trim();
-    if (!text) { byId("issue-feedback").textContent = "Describe the problem before ending the simulated call."; return; }
-    const ids = complaintFormIds(text);
-    if (disconnect.dataset.simDisconnect === "saved") {
+    const note = form.elements.text.value.trim();
+    if (!note) { byId("issue-feedback").textContent = "Describe the problem before simulating a disconnect."; return; }
+    const ids = ensureSimulationIds(note);
+    const saved = disconnect.dataset.simDisconnect === "saved";
+    if (saved) {
       try {
-        const { issue } = await post("/api/issues", { unit_id: UNIT, text, source: "simulated voice event",
+        const { issue } = await post("/api/issues", { unit_id: UNIT, text: note, source: "simulated voice event",
           call_session_id: ids.sessionId, client_event_id: ids.eventId,
           shared_order_id: form.elements.share?.checked ? latestOrder()?.order_id : null });
-        call.recovery = { state: "saved", issue };
+        call.issueId = issue.issue_id;
+        recovery = { text: issue.text, saved: true, ...ids };
+        byId("issue-feedback").textContent = "The call disconnected after the report was saved.";
         await refreshState();
-      } catch (error) { byId("issue-feedback").textContent = error.message; return; }
+      } catch (error) { byId("issue-feedback").textContent = error.message; }
     } else {
-      call.recovery = { state: "unfinished", draft: text, ...ids };
+      recovery = { text: note, saved: false, ...ids };
+      byId("issue-feedback").textContent = "The note is ready to recover. Review it before submitting.";
+      renderComplaintRecovery();
     }
-    byId("issue-feedback").textContent = "The complaint call disconnected.";
-    renderComplaintRecovery();
+    return;
+  }
+  const recoveryButton = event.target.closest("[data-recovery-submit],[data-recovery-retry]");
+  if (recoveryButton && recovery) {
+    try {
+      const share = byId("recovery-share");
+      const { issue } = await post("/api/issues", { unit_id: UNIT, text: recovery.text, source: "simulated voice event",
+        call_session_id: recovery.sessionId, client_event_id: recovery.eventId,
+        shared_order_id: share?.checked ? latestOrder()?.order_id : null });
+      call.issueId = issue.issue_id;
+      recovery = { ...recovery, text: issue.text, saved: true };
+      byId("issue-feedback").textContent = "Complaint saved. The report appears below.";
+      await refreshState();
+    } catch (error) { byId("issue-feedback").textContent = error.message; }
     return;
   }
   const t = event.target.closest("[data-call],[data-decide],[data-partner],[data-run],[data-phone],#demo-reset");
@@ -773,11 +757,11 @@ document.addEventListener("click", async (event) => {
   if (t.id === "demo-reset") {
     await endCall();
     Object.assign(call, { status: "idle", transcript: [], issueId: null, error: "", muted: false });
-    Object.assign(complaintFormAttempt, { sessionId: null, eventId: null, text: null });
     Object.assign(resident, { declined: false, consent: false, busy: false, error: "", submissionId: null, selectedVersion: null });
     chosenOfferId = null;
     chosenOfferVersion = null;
-    Object.assign(call, { sessionId: null, eventNumber: 0, pendingEvent: null, recovery: null });
+    recovery = null;
+    simulatedComplaint = { sessionId: null, eventId: null, text: null };
     await post("/api/reset");
     await refreshState();
     await loadPortfolio();
@@ -797,6 +781,7 @@ setInterval(() => {
   refreshState().catch(() => {});
   if (!document.getElementById("portfolio")?.contains(document.activeElement)) loadPortfolio();
 }, 2500);
+setupStaffNavigation();
 loadPortfolio();
 
 window.flow = { render, renderPartner, chooseOffer, syncOfferVersion };

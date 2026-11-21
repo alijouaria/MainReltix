@@ -61,5 +61,14 @@
       "expiry_date": "2026-12-15",
       "current_monthly_price_eur": 90.75
     }
-  ]
+  ],
+  "renewal_case": {
+    "coverage_review": {
+      "status": "unsupported",
+      "postcode": "40479",
+      "reason": "In the window, but no partner serves postcode 40479. Property manager notified; no order can be placed.",
+      "at": "2026-11-21T03:05:22Z"
+    },
+    "needs_person": "In the window, but no partner serves postcode 40479. Property manager notified; no order can be placed."
+  }
 }

@@ -30,6 +30,7 @@
   </aside>
 
   <div class="dash-main">
+    <main class="view active" id="staff-overview">
     <header class="dash-top">
       <div>
         <h1 class="dash-hello">Good to see you, property team</h1>
@@ -91,28 +92,37 @@
         <div id="portfolio" class="portfolio" aria-live="polite"></div>
       </section>
 
-      <section class="panel panel-partner view active staff-partner" id="company-view" aria-labelledby="company-title">
-        <a id="partner"></a>
-        <div class="panel-head"><h2 id="company-title">New order</h2><span class="muted small" id="order-id-label"></span></div>
-        <p class="muted small" id="partner-lead">Hi <strong id="partner-name">Energy partner</strong>. A customer picked one of your plans.</p>
-        <div id="order-card"></div>
-        <div class="call-script" id="call-script"></div>
-        <div class="answer-row" id="partner-actions"></div>
-        <div id="partner-issues"></div>
-        <div class="section-label timeline-label"><span>History</span></div>
-        <ol class="timeline" id="job-timeline"></ol>
-        <details class="fold">
-          <summary><span>Your plans</span><span class="muted small">prices customers see</span></summary>
-          <form id="offers-form" class="feed-form">
-            <div class="plan-table" id="plan-rows"></div>
-            <button class="text-button add-plan" id="add-plan" type="button">+ Add a plan</button>
-            <textarea id="offers-input" hidden></textarea>
-            <div class="company-actions"><span class="form-message" id="offers-message" role="status"></span><button class="button button-primary" type="submit">Save plans</button></div>
-          </form>
-        </details>
-        <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
-      </section>
     </div>
+    </main>
+      <section class="staff-partner view" id="company-view" aria-labelledby="partner-page-title">
+        <header class="dash-top">
+          <div>
+            <h1 class="dash-hello" id="partner-page-title">Energy partner</h1>
+            <p class="muted small">Manage supplier orders, plans and resident follow-up.</p>
+          </div>
+        </header>
+        <section class="panel panel-partner" aria-labelledby="company-title">
+          <a id="partner"></a>
+          <div class="panel-head"><h2 id="company-title">New order</h2><span class="muted small" id="order-id-label"></span></div>
+          <p class="muted small" id="partner-lead">Hi <strong id="partner-name">Energy partner</strong>. A customer picked one of your plans.</p>
+          <div id="order-card"></div>
+          <div class="call-script" id="call-script"></div>
+          <div class="answer-row" id="partner-actions"></div>
+          <div id="partner-issues"></div>
+          <div class="section-label timeline-label"><span>History</span></div>
+          <ol class="timeline" id="job-timeline"></ol>
+          <details class="fold">
+            <summary><span>Your plans</span><span class="muted small">prices customers see</span></summary>
+            <form id="offers-form" class="feed-form">
+              <div class="plan-table" id="plan-rows"></div>
+              <button class="text-button add-plan" id="add-plan" type="button">+ Add a plan</button>
+              <textarea id="offers-input" hidden></textarea>
+              <div class="company-actions"><span class="form-message" id="offers-message" role="status"></span><button class="button button-primary" type="submit">Save plans</button></div>
+            </form>
+          </details>
+          <p class="fine-print">Partner answers go back to centrix as status updates (connector spec §6).</p>
+        </section>
+      </section>
     <footer class="app-footer">Reltix · local demo · sample data</footer>
   </div>
 </body>
